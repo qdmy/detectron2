@@ -1,0 +1,15 @@
+_BASE_: "../Base-RetinaNet.yaml"
+MODEL:
+  WEIGHTS: "weights/det-resnet18/official-r18.pth.raw"
+  RESNETS:
+    DEPTH: 18
+    RES2_OUT_CHANNELS: 64
+    NORM: "BN"
+  BACKBONE:
+    FREEZE_AT: 0
+  FPN:
+    NORM: "BN"
+    USE_RELU: True
+  RETINANET:
+    NORM: "GN"
+OUTPUT_DIR: output/coco-detection/retinanet_R_18_FPN_1x-FPN_BN-Head_GN

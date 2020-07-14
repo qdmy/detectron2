@@ -1,0 +1,15 @@
+_BASE_: "../Base-RetinaNet.yaml"
+MODEL:
+  WEIGHTS: "weights/det-resnet50/official-r50.pth.raw"
+  RESNETS:
+    DEPTH: 50
+    STRIDE_IN_1X1: False
+    NORM: "SyncBN"
+  BACKBONE:
+    FREEZE_AT: 0
+  FPN:
+    NORM: "SyncBN"
+    USE_RELU: True
+  RETINANET:
+    NORM: "SyncBN"
+OUTPUT_DIR: output/coco-detection/retinanet_R_50_FPN_1x-Full_SyncBN
