@@ -15,6 +15,14 @@ from torch.nn.modules.utils import _ntuple
 
 from detectron2.utils.env import TORCH_VERSION
 
+import logging
+export_quantization = True
+try:
+    import torch.nn.functional as F
+    from third_party.quantization.quant import quantization as Quantization
+except:
+    export_quantization = False
+
 
 def cat(tensors: List[torch.Tensor], dim: int = 0):
     """
@@ -60,6 +68,30 @@ class Conv2d(torch.nn.Conv2d):
         self.norm = norm
         self.activation = activation
 
+        # add for quantization support
+        self.quantization = None
+        self.quant_activation = None
+        self.quant_weight = None
+        self.pads = None
+
+    def convert_to_quantization_version(self, quantization=None, index=-1):
+        self.quantization = quantization
+        logger = logging.getLogger(__name__ + '.Quantization')
+        if self.quantization is not None and export_quantization:
+            if index == 0:
+                for i in ['proxquant', 'custom-update', 'real_skip']:
+                    if i in quantization.keyword:
+                        logger.info("warning keyword {} not support".format(i))
+            self.pads = tuple(x for x in self.padding for _ in range(2))
+            self.quant_activation = Quantization(self.quantization, 'fm', [1, self.in_channels, 1, 1], logger=logger)
+            self.quant_weight = Quantization(self.quantization, 'wt', [self.out_channels, self.in_channels, *self.kernel_size], logger=logger)
+            self.padding_after_quant = getattr(self.quantization, 'padding_after_quant', False)
+            self.quant_activation.update_quantization(index=index)
+            self.quant_weight.update_quantization(index=index)
+            device = self.weight.device
+            self.quant_activation.to(device)
+            self.quant_weight.to(device)
+
     def forward(self, x):
         if x.numel() == 0 and self.training:
             # https://github.com/pytorch/pytorch/issues/12013
@@ -91,7 +123,26 @@ class Conv2d(torch.nn.Conv2d):
             else:
                 return empty
 
-        x = super().forward(x)
+        if self.quantization is not None:
+            weight = self.quant_weight(self.weight)
+            if self.padding_after_quant:
+                x = self.quant_activation(x)
+
+            if self.padding_mode == 'circular':
+                expanded_padding = ((self.padding[1] + 1) // 2, self.padding[1] // 2,
+                                    (self.padding[0] + 1) // 2, self.padding[0] // 2)
+                x = F.pad(x, expanded_padding, mode='circular')
+            else:
+                x = F.pad(x, self.pads, 'constant', 0)
+            padding = (0, 0)
+
+            if not self.padding_after_quant:
+                x = self.quant_activation(x)
+
+            x = F.conv2d(x, weight, self.bias, self.stride, padding, self.dilation, self.groups)
+        else:
+            x = super().forward(x)
+
         if self.norm is not None:
             x = self.norm(x)
         if self.activation is not None:

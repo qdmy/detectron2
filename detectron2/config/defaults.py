@@ -614,3 +614,53 @@ _C.VIS_PERIOD = 0
 # Do not commit any configs into it.
 _C.GLOBAL = CN()
 _C.GLOBAL.HACK = 1.0
+
+########  custom options ################
+# enable FP16 training
+_C.MODEL.fp16 = False
+_C.MODEL.apex_sync_bn = False
+
+# double initilization
+_C.MODEL.EXTRA_WEIGHTS = ""
+
+# RELU in FPN
+_C.MODEL.FPN.USE_RELU = False
+
+# Norm for Retina-Net
+_C.MODEL.RETINANET.NORM = ""
+
+# quantization options
+_C.MODEL.QUANTIZATION = CN()
+_C.MODEL.QUANTIZATION.keyword = ['', ]
+_C.MODEL.QUANTIZATION.scope = ['', ]
+_C.MODEL.QUANTIZATION.stable = 0
+# for feature map
+_C.MODEL.QUANTIZATION.fm_enable = False
+_C.MODEL.QUANTIZATION.fm_bit = 32.0
+_C.MODEL.QUANTIZATION.fm_level = 0
+_C.MODEL.QUANTIZATION.fm_half_range = True
+_C.MODEL.QUANTIZATION.fm_separator = 0.38
+_C.MODEL.QUANTIZATION.fm_ratio = 1.0
+_C.MODEL.QUANTIZATION.fm_scale = 0.5
+_C.MODEL.QUANTIZATION.fm_boundary = 1.0
+_C.MODEL.QUANTIZATION.fm_quant_group = 0
+_C.MODEL.QUANTIZATION.fm_adaptive = "none"
+# for weight
+_C.MODEL.QUANTIZATION.wt_enable = False
+_C.MODEL.QUANTIZATION.wt_bit = 32.0
+_C.MODEL.QUANTIZATION.wt_level = 0
+_C.MODEL.QUANTIZATION.wt_half_range = False
+_C.MODEL.QUANTIZATION.wt_separator = 0.38
+_C.MODEL.QUANTIZATION.wt_ratio = 1.0
+_C.MODEL.QUANTIZATION.wt_scale = 0.5
+_C.MODEL.QUANTIZATION.wt_boundary = 1.0
+_C.MODEL.QUANTIZATION.wt_quant_group = 0
+_C.MODEL.QUANTIZATION.wt_adaptive = "none"
+# progressive training
+_C.MODEL.QUANTIZATION.progressive = CN()
+_C.MODEL.QUANTIZATION.progressive.enable = False
+_C.MODEL.QUANTIZATION.progressive.scope = ['', ]
+_C.MODEL.QUANTIZATION.progressive.fm_start_bit = 16.0
+_C.MODEL.QUANTIZATION.progressive.wt_start_bit = 16.0
+_C.MODEL.QUANTIZATION.progressive.fm_end_bit = 2.0
+_C.MODEL.QUANTIZATION.progressive.wt_end_bit = 2.0

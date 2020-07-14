@@ -66,7 +66,7 @@ template <typename T>
 __global__ void RoIAlignForward(
     const int nthreads,
     const T* bottom_data,
-    const T spatial_scale,
+    const float spatial_scale,
     const int channels,
     const int height,
     const int width,
@@ -204,7 +204,7 @@ __global__ void RoIAlignBackwardFeature(
     const int nthreads,
     const T* top_diff,
     const int num_rois,
-    const T spatial_scale,
+    const float spatial_scale,
     const int channels,
     const int height,
     const int width,
@@ -346,7 +346,7 @@ at::Tensor ROIAlign_forward_cuda(
   }
 
   auto input_ = input.contiguous(), rois_ = rois.contiguous();
-  AT_DISPATCH_FLOATING_TYPES(input.scalar_type(), "ROIAlign_forward", [&] {
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(), "ROIAlign_forward", [&] {
     RoIAlignForward<scalar_t><<<grid, block, 0, stream>>>(
         output_size,
         input_.data_ptr<scalar_t>(),
@@ -407,7 +407,7 @@ at::Tensor ROIAlign_backward_cuda(
   }
 
   auto grad_ = grad.contiguous(), rois_ = rois.contiguous();
-  AT_DISPATCH_FLOATING_TYPES(grad.scalar_type(), "ROIAlign_backward", [&] {
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(grad.scalar_type(), "ROIAlign_backward", [&] {
     RoIAlignBackwardFeature<scalar_t><<<grid, block, 0, stream>>>(
         grad.numel(),
         grad_.data_ptr<scalar_t>(),

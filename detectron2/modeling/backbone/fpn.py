@@ -20,7 +20,7 @@ class FPN(Backbone):
     """
 
     def __init__(
-        self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum"
+        self, bottom_up, in_features, out_channels, norm="", activation=False, top_block=None, fuse_type="sum"
     ):
         """
         Args:
@@ -101,6 +101,7 @@ class FPN(Backbone):
         self._size_divisibility = in_strides[-1]
         assert fuse_type in {"avg", "sum"}
         self._fuse_type = fuse_type
+        self.use_relu = activation
 
     @property
     def size_divisibility(self):
@@ -133,7 +134,11 @@ class FPN(Backbone):
             prev_features = lateral_features + top_down_features
             if self._fuse_type == "avg":
                 prev_features /= 2
-            results.insert(0, output_conv(prev_features))
+            if self.use_relu:
+                prev_features = F.relu_(prev_features)
+                results.insert(0, F.relu_(output_conv(prev_features)))
+            else:
+                results.insert(0, output_conv(prev_features))
 
         if self.top_block is not None:
             top_block_in_feature = bottom_up_features.get(self.top_block.in_feature, None)
@@ -183,18 +188,26 @@ class LastLevelP6P7(nn.Module):
     C5 feature.
     """
 
-    def __init__(self, in_channels, out_channels, in_feature="res5"):
+    def __init__(self, in_channels, out_channels, in_feature="res5", norm="", activation=False):
         super().__init__()
         self.num_levels = 2
         self.in_feature = in_feature
-        self.p6 = nn.Conv2d(in_channels, out_channels, 3, 2, 1)
-        self.p7 = nn.Conv2d(out_channels, out_channels, 3, 2, 1)
+        self.use_relu = activation
+        use_bias = norm == ""
+        self.p6 = Conv2d(in_channels, out_channels, 3, 2, 1, bias=use_bias, norm=get_norm(norm, out_channels))
+        self.p7 = Conv2d(out_channels, out_channels, 3, 2, 1, bias=use_bias, norm=get_norm(norm, out_channels))
         for module in [self.p6, self.p7]:
             weight_init.c2_xavier_fill(module)
 
     def forward(self, c5):
         p6 = self.p6(c5)
-        p7 = self.p7(F.relu(p6))
+        if self.use_relu:
+            p6 = F.relu_(p6)
+            p7 = self.p7(p6)
+        else:
+            p7 = self.p7(F.relu(p6))
+        if self.use_relu:
+            p7 = F.relu_(p7)
         return [p6, p7]
 
 
@@ -215,6 +228,7 @@ def build_resnet_fpn_backbone(cfg, input_shape: ShapeSpec):
         in_features=in_features,
         out_channels=out_channels,
         norm=cfg.MODEL.FPN.NORM,
+        activation=cfg.MODEL.FPN.USE_RELU,
         top_block=LastLevelMaxPool(),
         fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
     )
@@ -233,13 +247,16 @@ def build_retinanet_resnet_fpn_backbone(cfg, input_shape: ShapeSpec):
     bottom_up = build_resnet_backbone(cfg, input_shape)
     in_features = cfg.MODEL.FPN.IN_FEATURES
     out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    norm = cfg.MODEL.FPN.NORM
+    activation = cfg.MODEL.FPN.USE_RELU
     in_channels_p6p7 = bottom_up.output_shape()["res5"].channels
     backbone = FPN(
         bottom_up=bottom_up,
         in_features=in_features,
         out_channels=out_channels,
         norm=cfg.MODEL.FPN.NORM,
-        top_block=LastLevelP6P7(in_channels_p6p7, out_channels),
+        activation=activation,
+        top_block=LastLevelP6P7(in_channels_p6p7, out_channels, norm=norm, activation=activation),
         fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
     )
     return backbone

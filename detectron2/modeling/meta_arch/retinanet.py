@@ -8,7 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from detectron2.data.detection_utils import convert_image_to_rgb
-from detectron2.layers import ShapeSpec, batched_nms, cat
+from detectron2.layers import ShapeSpec, batched_nms, cat, Conv2d, get_norm
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
 from detectron2.utils.events import get_event_storage
 
@@ -21,6 +21,17 @@ from .build import META_ARCH_REGISTRY
 
 __all__ = ["RetinaNet"]
 
+class ModuleListDial(nn.ModuleList):
+    def __init__(self, modules=None):
+        super(ModuleListDial, self).__init__(modules)
+        self.cur_position = 0
+
+    def forward(self, x):
+        result = self[self.cur_position](x)
+        self.cur_position += 1
+        if self.cur_position >= len(self):
+            self.cur_position = 0
+        return result
 
 def permute_to_N_HWA_K(tensor, K):
     """
@@ -388,23 +399,34 @@ class RetinaNetHead(nn.Module):
         num_convs        = cfg.MODEL.RETINANET.NUM_CONVS
         prior_prob       = cfg.MODEL.RETINANET.PRIOR_PROB
         num_anchors      = build_anchor_generator(cfg, input_shape).num_cell_anchors
+        norm             = cfg.MODEL.RETINANET.NORM
+        self.num_levels  = len(cfg.MODEL.RETINANET.IN_FEATURES)
         # fmt: on
         assert (
             len(set(num_anchors)) == 1
         ), "Using different number of anchors between levels is not currently supported!"
         num_anchors = num_anchors[0]
+        assert norm in ['', 'BN', 'SyncBN', 'GN'], "unknown normalization %s" % norm
 
         cls_subnet = []
         bbox_subnet = []
         for _ in range(num_convs):
             cls_subnet.append(
-                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+                Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
             )
-            cls_subnet.append(nn.ReLU())
+            if 'GN' in norm:
+                cls_subnet.append(get_norm(norm, in_channels))
+            elif 'BN' in norm:
+                cls_subnet.append(ModuleListDial([get_norm(norm, in_channels) for _ in range(self.num_levels)]))
+            cls_subnet.append(nn.ReLU(inplace=True))
             bbox_subnet.append(
-                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+                Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
             )
-            bbox_subnet.append(nn.ReLU())
+            if 'GN' in norm:
+                bbox_subnet.append(get_norm(norm, in_channels))
+            elif 'BN' in norm:
+                bbox_subnet.append(ModuleListDial([get_norm(norm, in_channels) for _ in range(self.num_levels)]))
+            bbox_subnet.append(nn.ReLU(inplace=True))
 
         self.cls_subnet = nn.Sequential(*cls_subnet)
         self.bbox_subnet = nn.Sequential(*bbox_subnet)

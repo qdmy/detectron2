@@ -183,8 +183,9 @@ class DefaultPredictor:
         self.model.eval()
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
 
-        checkpointer = DetectionCheckpointer(self.model)
-        checkpointer.load(cfg.MODEL.WEIGHTS)
+        checkpointer = DetectionCheckpointer(self.model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+            cfg.MODEL.WEIGHTS, resume=True
+        )
 
         self.aug = T.ResizeShortestEdge(
             [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST], cfg.INPUT.MAX_SIZE_TEST
@@ -273,12 +274,19 @@ class DefaultTrainer(SimpleTrainer):
         optimizer = self.build_optimizer(cfg, model)
         data_loader = self.build_train_loader(cfg)
 
+        if cfg.MODEL.fp16:
+            import apex
+            from apex import amp
+            if cfg.MODEL.apex_sync_bn:
+                model = apex.parallel.convert_syncbn_model(model)
+            model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
+
         # For training, wrap with DDP. But don't need this for inference.
         if comm.get_world_size() > 1:
             model = DistributedDataParallel(
                 model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
             )
-        super().__init__(model, data_loader, optimizer)
+        super().__init__(model, data_loader, optimizer, cfg)
 
         self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         # Assume no other objects need to be checkpointed.
@@ -289,6 +297,7 @@ class DefaultTrainer(SimpleTrainer):
             cfg.OUTPUT_DIR,
             optimizer=optimizer,
             scheduler=self.scheduler,
+            amp=amp if cfg.MODEL.fp16 else None,
         )
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
@@ -307,6 +316,8 @@ class DefaultTrainer(SimpleTrainer):
         Args:
             resume (bool): whether to do resume or not
         """
+        if self.cfg.MODEL.EXTRA_WEIGHTS != "" and resume == False:
+            self.checkpointer.load_extra(self.cfg.MODEL.EXTRA_WEIGHTS)
         checkpoint = self.checkpointer.resume_or_load(self.cfg.MODEL.WEIGHTS, resume=resume)
         if resume and self.checkpointer.has_checkpoint():
             self.start_iter = checkpoint.get("iteration", -1) + 1

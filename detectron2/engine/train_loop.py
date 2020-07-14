@@ -10,6 +10,11 @@ import torch
 import detectron2.utils.comm as comm
 from detectron2.utils.events import EventStorage
 
+try:
+    from apex import amp
+except ImportError:
+    pass
+
 __all__ = ["HookBase", "TrainerBase", "SimpleTrainer"]
 
 
@@ -175,7 +180,7 @@ class SimpleTrainer(TrainerBase):
     or write your own training loop.
     """
 
-    def __init__(self, model, data_loader, optimizer):
+    def __init__(self, model, data_loader, optimizer, cfg=None):
         """
         Args:
             model: a torch Module. Takes a data from data_loader and returns a
@@ -197,6 +202,7 @@ class SimpleTrainer(TrainerBase):
         self.data_loader = data_loader
         self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer
+        self.cfg = cfg
 
     def run_step(self):
         """
@@ -221,7 +227,12 @@ class SimpleTrainer(TrainerBase):
         wrap the optimizer with your custom `zero_grad()` method.
         """
         self.optimizer.zero_grad()
-        losses.backward()
+
+        if self.cfg.MODEL.fp16:
+            with amp.scale_loss(losses, self.optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            losses.backward()
 
         # use a new stream so the ops don't wait for DDP
         with torch.cuda.stream(torch.cuda.Stream()):

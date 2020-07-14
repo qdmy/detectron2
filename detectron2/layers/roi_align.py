@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import torch
 from torch import nn
 from torchvision.ops import roi_align as tv_roi_align
 
@@ -22,6 +23,8 @@ else:
     class _ROIAlign(Function):
         @staticmethod
         def forward(ctx, input, roi, output_size, spatial_scale, sampling_ratio, aligned):
+            if isinstance(roi, torch.Tensor) and roi.dtype != input.dtype:
+                roi = roi.half()
             ctx.save_for_backward(roi)
             ctx.output_size = _pair(output_size)
             ctx.spatial_scale = spatial_scale

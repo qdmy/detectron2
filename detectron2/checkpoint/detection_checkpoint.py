@@ -7,6 +7,8 @@ import detectron2.utils.comm as comm
 
 from .c2_model_loading import align_and_update_state_dicts
 
+import os
+
 
 class DetectionCheckpointer(Checkpointer):
     """
@@ -16,6 +18,12 @@ class DetectionCheckpointer(Checkpointer):
 
     def __init__(self, model, save_dir="", *, save_to_disk=None, **checkpointables):
         is_main_process = comm.is_main_process()
+        none_list = []
+        for k, v in checkpointables.items():
+            if v is None:
+                none_list.append(k)
+        for k in none_list:
+            checkpointables.pop(k)
         super().__init__(
             model,
             save_dir,
@@ -41,7 +49,12 @@ class DetectionCheckpointer(Checkpointer):
 
         loaded = super()._load_file(filename)  # load native pth checkpoint
         if "model" not in loaded:
-            loaded = {"model": loaded}
+            if 'state_dict' in loaded:
+                loaded = {"model": loaded['state_dict']}
+                #loaded["matching_heuristics"] = True
+                #self.logger.info("Loading model from state_dict of the checkpoint, turn on the matching_heuristics option")
+            else:
+                loaded = {"model": loaded}
         return loaded
 
     def _load_model(self, checkpoint):
@@ -71,3 +84,14 @@ class DetectionCheckpointer(Checkpointer):
                 except ValueError:
                     pass
         return incompatible
+
+    def load_extra(self, filename):
+        if not os.path.isfile(filename):
+            filename = PathManager.get_local_path(filename)
+        if not os.path.isfile(filename):
+            return None
+
+        self.logger.info("Loading model from {}".format(filename))
+        checkpoint = self._load_file(filename)  # load native pth checkpoint
+        self._load_model(checkpoint)
+        return checkpoint
