@@ -275,3 +275,17 @@ def nonzero_tuple(x):
     if x.dim() == 0:
         return x.unsqueeze(0).nonzero().unbind(1)
     return x.nonzero().unbind(1)
+
+class SkipModule(torch.nn.Module):
+    def __init__(self, module_list):
+        super(SkipModule, self).__init__()
+        self.seq = torch.nn.ModuleList(module_list)
+
+    def forward(self, x):
+        output = self.seq(x) + x
+        return output
+
+def skip_connect(module_list):
+    assert isinstance(module_list, list), "module_list should be a list"
+    return SkipModule(module_list)
+
