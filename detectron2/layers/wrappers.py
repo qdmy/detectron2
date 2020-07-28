@@ -279,7 +279,7 @@ def nonzero_tuple(x):
 class SkipModule(torch.nn.Module):
     def __init__(self, module_list):
         super(SkipModule, self).__init__()
-        self.seq = torch.nn.ModuleList(module_list)
+        self.seq = torch.nn.Sequential(*module_list)
 
     def forward(self, x):
         output = self.seq(x) + x
