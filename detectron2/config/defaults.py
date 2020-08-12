@@ -645,6 +645,7 @@ _C.MODEL.QUANTIZATION.fm_scale = 0.5
 _C.MODEL.QUANTIZATION.fm_boundary = 1.0
 _C.MODEL.QUANTIZATION.fm_quant_group = 0
 _C.MODEL.QUANTIZATION.fm_adaptive = "none"
+_C.MODEL.QUANTIZATION.fm_grad_type = "none"
 # for weight
 _C.MODEL.QUANTIZATION.wt_enable = False
 _C.MODEL.QUANTIZATION.wt_bit = 32.0
@@ -656,6 +657,7 @@ _C.MODEL.QUANTIZATION.wt_scale = 0.5
 _C.MODEL.QUANTIZATION.wt_boundary = 1.0
 _C.MODEL.QUANTIZATION.wt_quant_group = 0
 _C.MODEL.QUANTIZATION.wt_adaptive = "none"
+_C.MODEL.QUANTIZATION.wt_grad_type = "none"
 # progressive training
 _C.MODEL.QUANTIZATION.progressive = CN()
 _C.MODEL.QUANTIZATION.progressive.enable = False
