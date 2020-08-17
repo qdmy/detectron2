@@ -55,6 +55,10 @@ class DetectionCheckpointer(Checkpointer):
                 #self.logger.info("Loading model from state_dict of the checkpoint, turn on the matching_heuristics option")
             else:
                 loaded = {"model": loaded}
+
+        basename = os.path.basename(filename).lower()
+        if "lpf" in basename or "dla" in basename:
+            loaded["matching_heuristics"] = True
         return loaded
 
     def _load_model(self, checkpoint):
