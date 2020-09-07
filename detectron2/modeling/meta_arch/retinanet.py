@@ -1,9 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import logging
 import math
 import numpy as np
 from typing import List
 import torch
-from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
+from fvcore.nn import giou_loss, sigmoid_focal_loss_jit, smooth_l1_loss
 from torch import nn
 from torch.nn import functional as F
 
@@ -60,6 +61,7 @@ class RetinaNet(nn.Module):
         self.focal_loss_alpha         = cfg.MODEL.RETINANET.FOCAL_LOSS_ALPHA
         self.focal_loss_gamma         = cfg.MODEL.RETINANET.FOCAL_LOSS_GAMMA
         self.smooth_l1_loss_beta      = cfg.MODEL.RETINANET.SMOOTH_L1_LOSS_BETA
+        self.box_reg_loss_type        = cfg.MODEL.RETINANET.BBOX_REG_LOSS_TYPE
         # Inference parameters:
         self.score_threshold          = cfg.MODEL.RETINANET.SCORE_THRESH_TEST
         self.topk_candidates          = cfg.MODEL.RETINANET.TOPK_CANDIDATES_TEST
@@ -78,7 +80,7 @@ class RetinaNet(nn.Module):
         self.anchor_generator = build_anchor_generator(cfg, feature_shapes)
 
         # Matching and loss
-        self.box2box_transform = Box2BoxTransform(weights=cfg.MODEL.RPN.BBOX_REG_WEIGHTS)
+        self.box2box_transform = Box2BoxTransform(weights=cfg.MODEL.RETINANET.BBOX_REG_WEIGHTS)
         self.anchor_matcher = Matcher(
             cfg.MODEL.RETINANET.IOU_THRESHOLDS,
             cfg.MODEL.RETINANET.IOU_LABELS,
@@ -235,12 +237,24 @@ class RetinaNet(nn.Module):
             reduction="sum",
         )
 
-        loss_box_reg = smooth_l1_loss(
-            cat(pred_anchor_deltas, dim=1)[pos_mask],
-            gt_anchor_deltas[pos_mask],
-            beta=self.smooth_l1_loss_beta,
-            reduction="sum",
-        )
+        if self.box_reg_loss_type == "smooth_l1":
+            loss_box_reg = smooth_l1_loss(
+                cat(pred_anchor_deltas, dim=1)[pos_mask],
+                gt_anchor_deltas[pos_mask],
+                beta=self.smooth_l1_loss_beta,
+                reduction="sum",
+            )
+        elif self.box_reg_loss_type == "giou":
+            pred_boxes = [
+                self.box2box_transform.apply_deltas(k, anchors)
+                for k in cat(pred_anchor_deltas, dim=1)
+            ]
+            loss_box_reg = giou_loss(
+                torch.stack(pred_boxes)[pos_mask], torch.stack(gt_boxes)[pos_mask], reduction="sum"
+            )
+        else:
+            raise ValueError(f"Invalid bbox reg loss type '{self.box_reg_loss_type}'")
+
         return {
             "loss_cls": loss_cls / self.loss_normalizer,
             "loss_box_reg": loss_box_reg / self.loss_normalizer,
@@ -394,12 +408,16 @@ class RetinaNetHead(nn.Module):
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__()
         # fmt: off
-        in_channels      = input_shape[0].channels
-        num_classes      = cfg.MODEL.RETINANET.NUM_CLASSES
-        num_convs        = cfg.MODEL.RETINANET.NUM_CONVS
-        prior_prob       = cfg.MODEL.RETINANET.PRIOR_PROB
-        num_anchors      = build_anchor_generator(cfg, input_shape).num_cell_anchors
-        norm             = cfg.MODEL.RETINANET.NORM
+        in_channels = input_shape[0].channels
+        num_classes = cfg.MODEL.RETINANET.NUM_CLASSES
+        num_convs   = cfg.MODEL.RETINANET.NUM_CONVS
+        prior_prob  = cfg.MODEL.RETINANET.PRIOR_PROB
+        norm        = cfg.MODEL.RETINANET.NORM
+        # Disabling shared norm causes backwards compatibility issues
+        # Hardcode to true for now
+        # shared_norm = cfg.MODEL.RETINANET.SHARED_NORM
+
+        num_anchors = build_anchor_generator(cfg, input_shape).num_cell_anchors
         self.num_levels  = len(cfg.MODEL.RETINANET.IN_FEATURES)
         # fmt: on
         assert (
@@ -407,6 +425,10 @@ class RetinaNetHead(nn.Module):
         ), "Using different number of anchors between levels is not currently supported!"
         num_anchors = num_anchors[0]
         assert norm in ['', 'BN', 'SyncBN', 'GN'], "unknown normalization %s" % norm
+
+        if norm == "BN" or norm == "SyncBN":
+            logger = logging.getLogger(__name__)
+            logger.warn("Shared norm does not work well for BN, SyncBN, expect poor results")
 
         cls_subnet = []
         bbox_subnet = []

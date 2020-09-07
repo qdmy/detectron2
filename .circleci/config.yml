@@ -14,6 +14,17 @@ gpu: &gpu
     docker_layer_caching: true
   resource_class: gpu.small
 
+windows-cpu: &windows_cpu
+    machine:
+      resource_class: windows.medium
+      image: windows-server-2019-vs2019:stable
+      shell: powershell.exe
+
+# windows-gpu: &windows_gpu
+#     machine:
+#       resource_class: windows.gpu.nvidia.medium
+#       image: windows-server-2019-nvidia:stable
+
 # -------------------------------------------------------------------------------------
 # Re-usable commands
 # -------------------------------------------------------------------------------------
@@ -36,21 +47,51 @@ setup_venv: &setup_venv
         python --version
         which python
         which pip
-        pip install --upgrade pip
+        pip install --upgrade pip setuptools==49.6.0
+
+setup_venv_win: &setup_venv_win
+  - run:
+      name: Setup Virutal Env for Windows
+      command: |
+        pip install virtualenv
+        python -m virtualenv env
+        .\env\Scripts\activate
+        python --version
+        which python
+        which pip
 
 install_dep: &install_dep
   - run:
       name: Install Dependencies
       command: |
         pip install --progress-bar off -U 'git+https://github.com/facebookresearch/fvcore'
-        pip install --progress-bar off opencv-python
+        pip install --progress-bar off opencv-python pytest-xdist
         pip install --progress-bar off torch torchvision
+
+install_dep_win: &install_dep_win
+  - run:
+      name: Install Dependencies on Windows
+      command: |
+        pip install certifi --ignore-installed
+        pip install numpy
+        pip install cython
+        pip install pycocotools>=2.0.2
+        pip install -U git+https://github.com/facebookresearch/fvcore
+        pip install opencv-python pytest-xdist
+        pip install torch==1.6.0+cpu torchvision==0.7.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
 install_detectron2: &install_detectron2
   - run:
       name: Install Detectron2
       command: |
         gcc --version
+        pip install -U --progress-bar off -e .[dev]
+        python -m detectron2.utils.collect_env
+
+install_detectron2_win: &install_detectron2_win
+  - run:
+      name: Install Detectron2 on Windows
+      command: |
         pip install -U --progress-bar off -e .[dev]
         python -m detectron2.utils.collect_env
 
@@ -67,13 +108,13 @@ run_unittests: &run_unittests
   - run:
       name: Run Unit Tests
       command: |
-        python -m unittest discover -v -s tests
+        pytest -n 1 -v tests  # parallel causes some random failures
 
 # -------------------------------------------------------------------------------------
 # Jobs to run
 # -------------------------------------------------------------------------------------
 jobs:
-  cpu_tests:
+  linux_cpu_tests:
     <<: *cpu
 
     working_directory: ~/detectron2
@@ -85,19 +126,19 @@ jobs:
       # Cache the venv directory that contains dependencies
       - restore_cache:
           keys:
-            - cache-key-{{ .Branch }}-ID-20200425
+            - cache-key-{{ .Branch }}-ID-20200730
 
       - <<: *install_dep
 
       - save_cache:
           paths:
             - ~/venv
-          key: cache-key-{{ .Branch }}-ID-20200425
+          key: cache-key-{{ .Branch }}-ID-20200730
 
       - <<: *install_detectron2
       - <<: *run_unittests
 
-  gpu_tests:
+  linux_gpu_tests:
     <<: *gpu
 
     parameters:
@@ -142,25 +183,51 @@ jobs:
             docker exec -it d2 pip install 'git+https://github.com/facebookresearch/fvcore'
             docker cp ~/detectron2 d2:/detectron2
             # This will build d2 for the target GPU arch only
-            docker exec -it d2 pip install -e /detectron2
+            # Install with --editable so that pytest can run tests in the source directory
+            docker exec -it d2 pip install --progress-bar off -e /detectron2
             docker exec -it d2 python3 -m detectron2.utils.collect_env
             docker exec -it d2 python3 -c 'import torch; assert(torch.cuda.is_available())'
 
       - run:
           name: Run Unit Tests
           command: |
-            docker exec -e CIRCLECI=true -it d2 python3 -m unittest discover -v -s /detectron2/tests
+            docker exec -e CIRCLECI=true -it d2 python3 -m pytest -n 2 -v /detectron2/tests
+
+  windows_cpu_tests:
+    <<: *windows_cpu
+    steps:
+      - checkout
+      - <<: *setup_venv_win
+
+      # Cache the env directory that contains dependencies
+      - restore_cache:
+          keys:
+            - cache-key-{{ .Branch }}-ID-20200735
+
+      - <<: *install_dep_win
+
+      - save_cache:
+          paths:
+            - env
+          key: cache-key-{{ .Branch }}-ID-20200735
+
+      - <<: *install_detectron2_win
 
 workflows:
   version: 2
   regular_test:
     jobs:
-      - cpu_tests
-      - gpu_tests:
-          name: gpu_tests_pytorch1.4
+      - linux_cpu_tests
+      - linux_gpu_tests:
+          name: linux_gpu_tests_pytorch1.4
           pytorch_version: '1.4'
           torchvision_version: '0.5'
-      - gpu_tests:
-          name: gpu_tests_pytorch1.5
+      - linux_gpu_tests:
+          name: linux_gpu_tests_pytorch1.5
           pytorch_version: '1.5'
           torchvision_version: '0.6'
+      - linux_gpu_tests:
+          name: linux_gpu_tests_pytorch1.6
+          pytorch_version: '1.6'
+          torchvision_version: '0.7'
+      - windows_cpu_tests

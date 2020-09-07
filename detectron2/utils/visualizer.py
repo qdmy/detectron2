@@ -205,7 +205,7 @@ def _create_text_labels(classes, scores, class_names):
         list[str] or None
     """
     labels = None
-    if classes is not None and class_names is not None and len(class_names) > 1:
+    if classes is not None and class_names is not None and len(class_names) > 0:
         labels = [class_names[i] for i in classes]
     if scores is not None:
         if labels is None:
@@ -319,7 +319,6 @@ class Visualizer:
     Style such as color, opacity, label contents, visibility of labels, or even the visibility
     of objects themselves (e.g. when the object is too small) may change according
     to different heuristics, as long as the results still look visually reasonable.
-    For example, we currently do not draw class names if there is only one class.
     To obtain a consistent style, implement custom drawing functions with the primitive
     methods instead.
 
@@ -645,6 +644,10 @@ class Visualizer:
                     text_pos = (x0, y0)  # if drawing boxes, put text on the box corner.
                     horiz_align = "left"
                 elif masks is not None:
+                    # skip small mask without polygon
+                    if len(masks[i].polygons) == 0:
+                        continue
+
                     x0, y0, x1, y1 = masks[i].bbox()
 
                     # draw text in the center (defined by median) when box is not drawn

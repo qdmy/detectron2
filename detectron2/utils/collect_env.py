@@ -39,12 +39,12 @@ def detect_compute_compatibility(CUDA_HOME, so_file):
                 "'{}' --list-elf '{}'".format(cuobjdump, so_file), shell=True
             )
             output = output.decode("utf-8").strip().split("\n")
-            sm = []
+            arch = []
             for line in output:
-                line = re.findall(r"\.sm_[0-9]*\.", line)[0]
-                sm.append(line.strip("."))
-            sm = sorted(set(sm))
-            return ", ".join(sm)
+                line = re.findall(r"\.sm_([0-9]*)\.", line)[0]
+                arch.append(".".join(line))
+            arch = sorted(set(arch))
+            return ", ".join(arch)
         else:
             return so_file + "; cannot find cuobjdump"
     except Exception:
@@ -85,7 +85,7 @@ def collect_env_info():
     try:
         from detectron2 import _C
     except ImportError:
-        data.append(("detectron2._C", "failed to import"))
+        data.append(("detectron2._C", "failed to import. detectron2 is not built correctly"))
 
         # print system compilers when extension fails to build
         if sys.platform != "win32":  # don't know what to do for windows
@@ -123,14 +123,18 @@ def collect_env_info():
     if has_gpu:
         devices = defaultdict(list)
         for k in range(torch.cuda.device_count()):
-            devices[torch.cuda.get_device_name(k)].append(str(k))
+            cap = ".".join((str(x) for x in torch.cuda.get_device_capability(k)))
+            name = torch.cuda.get_device_name(k) + f" (arch={cap})"
+            devices[name].append(str(k))
         for name, devids in devices.items():
             data.append(("GPU " + ",".join(devids), name))
 
         if has_rocm:
-            data.append(("ROCM_HOME", str(ROCM_HOME)))
+            msg = " - invalid!" if not os.path.isdir(ROCM_HOME) else ""
+            data.append(("ROCM_HOME", str(ROCM_HOME) + msg))
         else:
-            data.append(("CUDA_HOME", str(CUDA_HOME)))
+            msg = " - invalid!" if not os.path.isdir(CUDA_HOME) else ""
+            data.append(("CUDA_HOME", str(CUDA_HOME) + msg))
 
             cuda_arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST", None)
             if cuda_arch_list:

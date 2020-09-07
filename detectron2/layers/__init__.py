@@ -9,5 +9,6 @@ from .shape_spec import ShapeSpec
 from .wrappers import BatchNorm2d, Conv2d, ConvTranspose2d, cat, interpolate, Linear, nonzero_tuple
 from .wrappers import skip_connect
 from .blocks import CNNBlockBase
+from .aspp import ASPP
 
 __all__ = [k for k in globals().keys() if not k.startswith("_")]

@@ -138,7 +138,10 @@ def _apply_exif_orientation(image):
     if not hasattr(image, "getexif"):
         return image
 
-    exif = image.getexif()
+    try:
+        exif = image.getexif()
+    except Exception:  # https://github.com/facebookresearch/detectron2/issues/1885
+        exif = None
 
     if exif is None:
         return image
@@ -178,7 +181,6 @@ def read_image(file_name, format=None):
 
         # work around this bug: https://github.com/python-pillow/Pillow/issues/3973
         image = _apply_exif_orientation(image)
-
         return convert_PIL_to_numpy(image, format)
 
 
@@ -376,7 +378,7 @@ def annotations_to_instances(annos, image_size, mask_format="polygon"):
     target = Instances(image_size)
     target.gt_boxes = Boxes(boxes)
 
-    classes = [obj["category_id"] for obj in annos]
+    classes = [int(obj["category_id"]) for obj in annos]
     classes = torch.tensor(classes, dtype=torch.int64)
     target.gt_classes = classes
 
@@ -499,7 +501,7 @@ def create_keypoint_hflip_indices(dataset_names):
     flip_map.update({v: k for k, v in flip_map.items()})
     flipped_names = [i if i not in flip_map else flip_map[i] for i in names]
     flip_indices = [names.index(i) for i in flipped_names]
-    return np.asarray(flip_indices)
+    return np.asarray(flip_indices, dtype=np.int32)
 
 
 def gen_crop_transform_with_instance(crop_size, image_size, instance):

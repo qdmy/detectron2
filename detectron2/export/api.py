@@ -8,9 +8,6 @@ from torch import nn
 
 from detectron2.config import CfgNode as CN
 
-from .caffe2_export import export_caffe2_detection_model
-from .caffe2_export import export_onnx_model as export_onnx_model_impl
-from .caffe2_export import run_and_save_graph
 from .caffe2_inference import ProtobufDetectionModel
 from .caffe2_modeling import META_ARCH_CAFFE2_EXPORT_TYPE_MAP, convert_batched_inputs_to_c2_format
 from .shared import get_pb_arg_vali, get_pb_arg_vals, save_graph
@@ -108,6 +105,8 @@ class Caffe2Tracer:
         Returns:
             Caffe2Model
         """
+        from .caffe2_export import export_caffe2_detection_model
+
         model, inputs = self._get_traceable()
         predict_net, init_net = export_caffe2_detection_model(model, inputs)
         return Caffe2Model(predict_net, init_net)
@@ -117,11 +116,14 @@ class Caffe2Tracer:
         Export the model to ONNX format.
         Note that the exported model contains custom ops only available in caffe2, therefore it
         cannot be directly executed by other runtime. Post-processing or transformation passes
-        may be applied on the model to accommodate different runtimes.
+        may be applied on the model to accommodate different runtimes, but we currently do not
+        provide support for them.
 
         Returns:
             onnx.ModelProto: an onnx model.
         """
+        from .caffe2_export import export_onnx_model as export_onnx_model_impl
+
         model, inputs = self._get_traceable()
         return export_onnx_model_impl(model, (inputs,))
 
@@ -164,7 +166,8 @@ def export_onnx_model(cfg, model, inputs):
     Export a detectron2 model to ONNX format.
     Note that the exported model contains custom ops only available in caffe2, therefore it
     cannot be directly executed by other runtime. Post-processing or transformation passes
-    may be applied on the model to accommodate different runtimes.
+    may be applied on the model to accommodate different runtimes, but we currently do not
+    provide support for them.
 
     Args:
         cfg (CfgNode): a detectron2 config, with extra export-related options
@@ -239,6 +242,8 @@ class Caffe2Model(nn.Module):
                 shape of every tensor. The shape information will be
                 saved together with the graph.
         """
+        from .caffe2_export import run_and_save_graph
+
         if inputs is None:
             save_graph(self._predict_net, output_file, op_only=False)
         else:

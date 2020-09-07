@@ -35,10 +35,12 @@ jobs:
     if: ${{ github.repository_owner == 'facebookresearch' || github.event_name == 'pull_request' }}
     strategy:
       matrix:
-        torch: [1.5]
+        torch: [1.5, 1.6]
         include:
           - torch: 1.5
             torchvision: 0.6
+          - torch: 1.6
+            torchvision: 0.7
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -57,8 +59,8 @@ jobs:
       - name: Install dependencies
         run: |
           brew install ninja
-          python -m pip install -U pip
-          python -m pip install opencv-python-headless onnx
+          python -m pip install -U pip setuptools==49
+          python -m pip install opencv-python-headless onnx pytest-xdist
           python -m pip install torch==${{matrix.torch}} torchvision==${{matrix.torchvision}} -f https://download.pytorch.org/whl/torch_stable.html
           python -m pip install -U 'git+https://github.com/facebookresearch/fvcore'
 
@@ -67,4 +69,4 @@ jobs:
           CC=clang CXX=clang++ python -m pip install -e .
           python -m detectron2.utils.collect_env
       - name: Run unittests
-        run: python -m unittest discover -v -s tests
+        run: python -m pytest -n 4 -v tests/
