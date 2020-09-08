@@ -287,7 +287,7 @@ class DefaultTrainer(SimpleTrainer):
         # For training, wrap with DDP. But don't need this for inference.
         if comm.get_world_size() > 1:
             model = DistributedDataParallel(
-                model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
+                model, device_ids=[comm.get_local_rank()], broadcast_buffers=False, find_unused_parameters=True
             )
         super().__init__(model, data_loader, optimizer, cfg)
 
@@ -372,7 +372,7 @@ class DefaultTrainer(SimpleTrainer):
 
         if comm.is_main_process():
             # run writers in the end, so that evaluation metrics are written
-            ret.append(hooks.PeriodicWriter(self.build_writers(), period=20))
+            ret.append(hooks.PeriodicWriter(self.build_writers(), period=cfg.SOLVER.PRINT_PERIOD))
         return ret
 
     def build_writers(self):
