@@ -633,9 +633,6 @@ _C.MODEL.EXTRA_WEIGHTS = ""
 # RELU in FPN
 _C.MODEL.FPN.USE_RELU = False
 
-# Norm for Retina-Net
-_C.MODEL.RETINANET.NORM = ""
-
 # quantization options
 _C.MODEL.QUANTIZATION = CN()
 _C.MODEL.QUANTIZATION.keyword = ['', ]
