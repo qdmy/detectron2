@@ -137,6 +137,12 @@ def get_norm(norm, out_channels):
     if isinstance(norm, str):
         if len(norm) == 0:
             return None
+        if '-' in norm:
+            pack = norm.split('-')
+            norm = pack[0]
+            activation = pack[1]
+        else:
+            activation = 'NONE'
         norm = {
             "BN": BatchNorm2d,
             # Fixed in https://github.com/pytorch/pytorch/pull/36382
@@ -147,7 +153,22 @@ def get_norm(norm, out_channels):
             "nnSyncBN": nn.SyncBatchNorm,
             "naiveSyncBN": NaiveSyncBatchNorm,
         }[norm]
-    return norm(out_channels)
+
+        actvs = {
+            "PReLU": nn.PReLU(),
+            "NReLU": nn.Sequential(),
+            "ReLU": nn.ReLU(inplace=True),
+            "NONE": None,
+        }
+        if activation not in actvs:
+            actv = None
+        else:
+            actv = actvs[activation]
+
+    if actv is None:
+        return norm(out_channels)
+    else:
+        return nn.Squential(norm(out_channels), actv)
 
 
 class AllReduce(Function):

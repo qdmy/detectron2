@@ -25,6 +25,7 @@ wheels/
 *.pth
 *.pkl
 *.npy
+.python-version
 
 # ipython/jupyter notebooks
 *.ipynb
