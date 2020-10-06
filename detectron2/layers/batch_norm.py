@@ -168,7 +168,7 @@ def get_norm(norm, out_channels):
     if actv is None:
         return norm(out_channels)
     else:
-        return nn.Squential(norm(out_channels), actv)
+        return nn.Sequential(norm(out_channels), actv)
 
 
 class AllReduce(Function):
