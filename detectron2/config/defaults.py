@@ -641,6 +641,9 @@ _C.MODEL.QUANTIZATION = CN()
 _C.MODEL.QUANTIZATION.keyword = ['', ]
 _C.MODEL.QUANTIZATION.scope = ['', ]
 _C.MODEL.QUANTIZATION.stable = 0
+_C.MODEL.QUANTIZATION.global_buffer = dict()
+_C.MODEL.QUANTIZATION.policy = ''
+_C.MODEL.QUANTIZATION.padding_after_quant = False
 # for feature map
 _C.MODEL.QUANTIZATION.fm_enable = False
 _C.MODEL.QUANTIZATION.fm_bit = 32.0
