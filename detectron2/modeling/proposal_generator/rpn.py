@@ -6,7 +6,7 @@ from fvcore.nn import giou_loss, smooth_l1_loss
 from torch import nn
 
 from detectron2.config import configurable
-from detectron2.layers import ShapeSpec, cat
+from detectron2.layers import ShapeSpec, cat, Conv2d
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.memory import retry_if_cuda_oom
@@ -90,7 +90,7 @@ class StandardRPNHead(nn.Module):
         """
         super().__init__()
         # 3x3 conv for the hidden representation
-        self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+        self.conv = Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
         # 1x1 conv for predicting objectness logits
         self.objectness_logits = nn.Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
         # 1x1 conv for predicting box2box transform deltas
