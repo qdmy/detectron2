@@ -139,7 +139,7 @@ class SemSegFPNHead(nn.Module):
                     padding=1,
                     bias=not norm,
                     norm=norm_module,
-                    activation=F.relu,
+                    activation=F.relu_,
                 )
                 weight_init.c2_msra_fill(conv)
                 head_ops.append(conv)

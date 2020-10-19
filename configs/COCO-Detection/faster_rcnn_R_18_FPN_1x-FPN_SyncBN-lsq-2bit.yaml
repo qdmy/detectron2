@@ -23,13 +23,14 @@ MODEL:
             'backbone.bottom_up.res5',
             # continue for more branch
             # FPN
+            'backbone.fpn_lateral2',
+            'backbone.fpn_output2',
             'backbone.fpn_lateral3',
             'backbone.fpn_output3',
             'backbone.fpn_lateral4',
             'backbone.fpn_output4',
             'backbone.fpn_lateral5',
             'backbone.fpn_output5',
-            'backbone.top_block',
             # Head
             'proposal_generator.rpn_head',
             'roi_heads.box_head',
