@@ -1,6 +1,6 @@
 _BASE_: "../Base-RCNN-FPN.yaml"
 MODEL:
-  WEIGHTS: "output/faster_rcnn/R_18_1x-FPN_SyncBN/model_final.pth"
+  WEIGHTS: "output/faster_rcnn/R_18_1x-FPN_SyncBN/model_final-export.pth"
   MASK_ON: False
   RESNETS:
     DEPTH: 18
@@ -34,7 +34,7 @@ MODEL:
             'proposal_generator.rpn_head',
             'roi_heads.box_head',
            ]
-    keyword: ["debug", "dorefa", "lsq", "linear-quant"]
+    keyword: ["debug", "dorefa", "lsq"]
     fm_enable: True 
     wt_enable: True 
     padding_after_quant: True
