@@ -20,8 +20,8 @@ def convert2quantization(model, cfg):
                 for m in cur.modules():
                     if hasattr(m, 'convert_to_quantization_version'):
                         index = index + 1
+                        #print('quantize layer {}, index {}'.format(item, index))
                         m.convert_to_quantization_version(quantization, index)
-                        #print('quantize layer {}'.format(item))
 
         ### progressive training on
         progressive = getattr(quantization, "progressive", None)

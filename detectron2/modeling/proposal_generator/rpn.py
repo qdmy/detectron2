@@ -99,7 +99,8 @@ class StandardRPNHead(nn.Module):
 
         for l in [self.conv, self.objectness_logits, self.anchor_deltas]:
             nn.init.normal_(l.weight, std=0.01)
-            nn.init.constant_(l.bias, 0)
+            if l.bias is not None:
+                nn.init.constant_(l.bias, 0)
 
     @classmethod
     def from_config(cls, cfg, input_shape):

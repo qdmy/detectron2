@@ -213,72 +213,68 @@ else:
             return _NewEmptyTensorOp.apply(x, output_shape)
 
 
-if TORCH_VERSION > (1, 5):
-    Linear = torch.nn.Linear
-else:
+class Linear(torch.nn.Linear):
+    """
+    A wrapper around :class:`torch.nn.Linear` to support empty inputs and more features.
+    Because of https://github.com/pytorch/pytorch/issues/34202
+    """
 
-    class Linear(torch.nn.Linear):
-        """
-        A wrapper around :class:`torch.nn.Linear` to support empty inputs and more features.
-        Because of https://github.com/pytorch/pytorch/issues/34202
-        """
+    def __init__(self, *args, **kwargs):
+        norm = kwargs.pop("norm", None)
+        activation = kwargs.pop("activation", None)
+        super().__init__(*args, **kwargs)
 
-        def __init__(self, *args, **kwargs):
-            norm = kwargs.pop("norm", None)
-            activation = kwargs.pop("activation", None)
-            super().__init__(*args, **kwargs)
+        self.norm = norm
+        self.activation = activation
 
-            self.norm = norm
-            self.activation = activation
+        # add for quantization support
+        self.quantization = None
+        self.quant_activation = None
+        self.quant_weight = None
+        self.force_fp = True
 
-            # add for quantization support
-            self.quantization = None
-            self.quant_activation = None
-            self.quant_weight = None
-            self.force_fp = True
+    def convert_to_quantization_version(self, quantization=None, index=-1):
+        args = quantization
+        logger = logging.getLogger(__name__ + '.Quantization')
+        if export_quantization and args is not None and hasattr(args, 'keyword'):
+            self.quantization = quantization
+            self.force_fp = False
+            self.quant_activation = Quantization(self.quantization, 'fm', [1, self.in_features, 1, 1], logger=logger)
+            self.quant_weight = Quantization(self.quantization, 'wt', [1, 1, self.in_features, self.out_features], logger=logger)
+            self.quant_activation.update_quantization(index=index)
+            self.quant_weight.update_quantization(index=index)
+            device = self.weight.device
+            self.quant_activation.to(device)
+            self.quant_weight.to(device)
 
-        def convert_to_quantization_version(self, quantization=None, index=-1):
-            args = quantization
-            logger = logging.getLogger(__name__ + '.Quantization')
-            if export_quantization and args is not None and hasattr(args, 'keyword') and 'linear-quant' in args.keyword:
-            	self.quantization = quantization
-                self.force_fp = False
-                self.quant_activation = Quantization(self.quantization, 'fm', [1, self.in_channels, 1, 1], logger=logger)
-                self.quant_weight = Quantization(self.quantization, 'wt', [1, 1, out_channels, in_channels], logger=logger)
-                self.quant_activation.update_quantization(index=index)
-                self.quant_weight.update_quantization(index=index)
-                device = self.weight.device
-                self.quant_activation.to(device)
-                self.quant_weight.to(device)
+    def forward(self, x):
+        if x.numel() == 0:
+            output_shape = [x.shape[0], self.weight.shape[0]]
 
-        def forward(self, x):
-            if x.numel() == 0:
-                output_shape = [x.shape[0], self.weight.shape[0]]
-
-                empty = _NewEmptyTensorOp.apply(x, output_shape)
-                if self.training:
-                    # This is to make DDP happy.
-                    # DDP expects all workers to have gradient w.r.t the same set of parameters.
-                    _dummy = sum(x.view(-1)[0] for x in self.parameters()) * 0.0
-                    return empty + _dummy
-                else:
-                    return empty
-
-            if self.quantization is not None and not self.force_fp:
-                shape = self.weight.shape 
-                weight = self.quant_weight(self.weight)
-                weight = weight.reshape(shape)
-                inputs = self.quant_activation(x)
-
-                x = F.linear(inputs, weight, self.bias)
+            empty = _NewEmptyTensorOp.apply(x, output_shape)
+            if self.training:
+                # This is to make DDP happy.
+                # DDP expects all workers to have gradient w.r.t the same set of parameters.
+                _dummy = sum(x.view(-1)[0] for x in self.parameters()) * 0.0
+                return empty + _dummy
             else:
-                x = super().forward(x)
+                return empty
 
-            if self.norm is not None:
-                x = self.norm(x)
-            if self.activation is not None:
-                x = self.activation(x)
-            return x
+        if self.quantization is not None and not self.force_fp:
+            shape = self.weight.shape 
+            weight = self.quant_weight(self.weight)
+            weight = weight.reshape(shape)
+            inputs = self.quant_activation(x)
+
+            x = F.linear(inputs, weight, self.bias)
+        else:
+            x = super().forward(x)
+
+        if self.norm is not None:
+            x = self.norm(x)
+        if self.activation is not None:
+            x = self.activation(x)
+        return x
 
 
 if TORCH_VERSION > (1, 4):

@@ -1,6 +1,6 @@
 _BASE_: "../Base-RCNN-FPN.yaml"
 MODEL:
-  WEIGHTS: "weights/det-resnet18/resnet18_w32a32.pth"
+  WEIGHTS: "output/faster_rcnn/R_18_1x-FPN_SyncBN/model_final.pth"
   MASK_ON: False
   RESNETS:
     DEPTH: 18
@@ -11,4 +11,37 @@ MODEL:
     FREEZE_AT: 0
   FPN:
     NORM: "SyncBN-ReLU"
-OUTPUT_DIR: "output/faster_rcnn/R_18_1x-FPN_SyncBN"
+  RPN:
+    HEAD_NORM: "SyncBN"
+  ROI_BOX_HEAD:
+    NORM: "SyncBN"
+  QUANTIZATION:
+    scope: [
+            'backbone.bottom_up.res2',
+            'backbone.bottom_up.res3',
+            'backbone.bottom_up.res4',
+            'backbone.bottom_up.res5',
+            # continue for more branch
+            # FPN
+            'backbone.fpn_lateral3',
+            'backbone.fpn_output3',
+            'backbone.fpn_lateral4',
+            'backbone.fpn_output4',
+            'backbone.fpn_lateral5',
+            'backbone.fpn_output5',
+            'backbone.top_block',
+            # Head
+            'proposal_generator.rpn_head',
+            'roi_heads.box_head',
+           ]
+    keyword: ["debug", "dorefa", "lsq", "linear-quant"]
+    fm_enable: True 
+    wt_enable: True 
+    padding_after_quant: True
+    fm_bit: 2.0
+    wt_bit: 2.0
+    fm_boundary: 1.0
+    wt_boundary: 1.0
+    wt_quant_group: 1
+    wt_adaptive: "var-mean"
+OUTPUT_DIR: "output/faster_rcnn/R_18_1x-FPN_SyncBN-lsq-2bit"
