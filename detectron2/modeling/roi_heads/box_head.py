@@ -63,7 +63,7 @@ class FastRCNNConvFCHead(nn.Module):
 
         self.fcs = []
         for k, fc_dim in enumerate(fc_dims):
-            fc = Linear(np.prod(self._output_size), fc_dim)
+            fc = Linear(np.prod(self._output_size), fc_dim, bias=not conv_norm, norm=get_norm(conv_norm, fc_dim))
             self.add_module("fc{}".format(k + 1), fc)
             self.fcs.append(fc)
             self._output_size = fc_dim
@@ -93,7 +93,7 @@ class FastRCNNConvFCHead(nn.Module):
             if x.dim() > 2:
                 x = torch.flatten(x, start_dim=1)
             for layer in self.fcs:
-                x = F.relu(layer(x))
+                x = F.relu(layer(x), inplace=True)
         return x
 
     @property

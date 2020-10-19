@@ -636,6 +636,9 @@ _C.MODEL.EXTRA_WEIGHTS = ""
 # RELU in FPN
 _C.MODEL.FPN.USE_RELU = False
 
+# RPN
+_C.MODEL.RPN.HEAD_NORM = ""
+
 # quantization options
 _C.MODEL.QUANTIZATION = CN()
 _C.MODEL.QUANTIZATION.keyword = ['', ]

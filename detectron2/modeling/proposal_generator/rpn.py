@@ -6,7 +6,7 @@ from fvcore.nn import giou_loss, smooth_l1_loss
 from torch import nn
 
 from detectron2.config import configurable
-from detectron2.layers import ShapeSpec, cat, Conv2d
+from detectron2.layers import ShapeSpec, cat, Conv2d, get_norm
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.memory import retry_if_cuda_oom
@@ -74,7 +74,7 @@ class StandardRPNHead(nn.Module):
     """
 
     @configurable
-    def __init__(self, *, in_channels: int, num_anchors: int, box_dim: int = 4):
+    def __init__(self, *, in_channels: int, num_anchors: int, box_dim: int = 4, norm: str = ''):
         """
         NOTE: this interface is experimental.
 
@@ -90,7 +90,8 @@ class StandardRPNHead(nn.Module):
         """
         super().__init__()
         # 3x3 conv for the hidden representation
-        self.conv = Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+        norm = get_norm(norm, in_channels)
+        self.conv = Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=norm is None, norm=norm)
         # 1x1 conv for predicting objectness logits
         self.objectness_logits = nn.Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
         # 1x1 conv for predicting box2box transform deltas
@@ -112,10 +113,11 @@ class StandardRPNHead(nn.Module):
         anchor_generator = build_anchor_generator(cfg, input_shape)
         num_anchors = anchor_generator.num_anchors
         box_dim = anchor_generator.box_dim
+        norm = cfg.MODEL.RPN.HEAD_NORM
         assert (
             len(set(num_anchors)) == 1
         ), "Each level must have the same number of anchors per spatial position"
-        return {"in_channels": in_channels, "num_anchors": num_anchors[0], "box_dim": box_dim}
+        return {"in_channels": in_channels, "num_anchors": num_anchors[0], "box_dim": box_dim, "norm": norm}
 
     def forward(self, features: List[torch.Tensor]):
         """
@@ -133,7 +135,7 @@ class StandardRPNHead(nn.Module):
         pred_objectness_logits = []
         pred_anchor_deltas = []
         for x in features:
-            t = F.relu(self.conv(x))
+            t = F.relu(self.conv(x), inplace=True)
             pred_objectness_logits.append(self.objectness_logits(t))
             pred_anchor_deltas.append(self.anchor_deltas(t))
         return pred_objectness_logits, pred_anchor_deltas
