@@ -426,3 +426,81 @@ class PreciseBN(HookBase):
                 + "Note that this could produce different statistics every time."
             )
             update_bn_stats(self._model, data_loader(), self._num_iter)
+
+
+__all__ += [
+    "LookupResourceUtilization",
+    "QuantizationPolicy",
+    ]
+
+enable_LookupResourceUtilization = True
+try:
+    from gpuinfo import GPUInfo
+except:
+    enable_LookupResourceUtilization = False
+
+class LookupResourceUtilization(HookBase):
+    """
+    """
+
+    def __init__(self, trigger=[1, 200]):
+        """
+        Args:
+            trigger (list of int): the number of iterations to trigger the lookup
+        """
+        if enable_LookupResourceUtilization:
+            self._trigger = trigger
+            self._logger = logging.getLogger(__name__)
+        else:
+            self._trigger = None
+
+    def after_step(self):
+        if isinstance(self._trigger, list) and self.trainer.iter in self._trigger:
+            self._logger.info(self.gpu_info())
+
+    def gpu_info(self):
+        try:
+            percent, memory = GPUInfo.gpu_usage()
+        except ValueError:
+            return "Error when read GPU utilization"
+        return "precent: %r, memory: %r" % (percent, memory)
+
+enable_QuantizationPolicy = True
+try:
+    from third_party.quantization.policy import deploy_on_init, read_policy, deploy_on_iteration
+except:
+    enable_QuantizationPolicy = False
+
+class QuantizationPolicy(HookBase):
+    """
+    """
+
+    def __init__(self, policy_file=""):
+        """
+        Args:
+            policy_file (str): filename of the policy
+        """
+        if enable_QuantizationPolicy:
+            self._policy_file = policy_file
+            self._iteration_policies = None
+            self._logger = logging.getLogger(__name__)
+        else:
+            self._policy_file = None
+
+    def before_train(self):
+        if self._policy_file in [None, '']:
+            return
+
+        self._logger.info("Employing policy on init".format(self._policy_file))
+        deploy_on_init(self.trainer.model, self._policy_file, verbose=self._logger.info)
+        self._logger.info("Reading dynamic policy of 'iteration' section".format(self._policy_file))
+        self._iteration_policies = read_policy(self._policy_file, section='iteration', verbose=self._logger.info)
+        self._logger.info("iteration_policies: {}".format(self._iteration_policies))
+
+    def before_step(self):
+        if self._policy_file in [None, ""] or self._iteration_policies in [None, []]:
+            return
+
+        deploy_on_iteration(self.trainer.model, self._iteration_policies, self.trainer.iter,
+                optimizer=self.trainer.optimizer, verbose=self._logging.info)
+

@@ -370,9 +370,15 @@ class DefaultTrainer(SimpleTrainer):
         # we can use the saved checkpoint to debug.
         ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results))
 
+        # trigger dynamic quantization policy
+        pf = getattr(getattr(cfg.MODEL, 'QUANTIZATION', dict()), 'policy', None)
+        ret.append(hooks.QuantizationPolicy(pf))
+
         if comm.is_main_process():
             # run writers in the end, so that evaluation metrics are written
             ret.append(hooks.PeriodicWriter(self.build_writers(), period=cfg.SOLVER.PRINT_PERIOD))
+            # print gpu memory usage
+            ret.append(hooks.LookupResourceUtilization())
         return ret
 
     def build_writers(self):
