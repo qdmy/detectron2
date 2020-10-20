@@ -7,7 +7,6 @@ from .roi_align import ROIAlign, roi_align
 from .roi_align_rotated import ROIAlignRotated, roi_align_rotated
 from .shape_spec import ShapeSpec
 from .wrappers import BatchNorm2d, Conv2d, ConvTranspose2d, cat, interpolate, Linear, nonzero_tuple
-from .wrappers import skip_connect
 from .blocks import CNNBlockBase
 from .aspp import ASPP
 

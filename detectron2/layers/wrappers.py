@@ -218,23 +218,17 @@ else:
             _dummy = sum(x.view(-1)[0] for x in self.parameters()) * 0.0
             return _NewEmptyTensorOp.apply(x, output_shape) + _dummy
 
+class BatchNorm2d(torch.nn.BatchNorm2d):
+    """
+    A wrapper around :class:`torch.nn.BatchNorm2d` to support zero-size tensor.
+    """
 
-if TORCH_VERSION > (1, 4):
-    BatchNorm2d = torch.nn.BatchNorm2d
-else:
-
-    class BatchNorm2d(torch.nn.BatchNorm2d):
-        """
-        A wrapper around :class:`torch.nn.BatchNorm2d` to support zero-size tensor.
-        """
-
-        def forward(self, x):
-            if x.numel() > 0:
-                return super(BatchNorm2d, self).forward(x)
-            # get output shape
-            output_shape = x.shape
-            return _NewEmptyTensorOp.apply(x, output_shape)
-
+    def forward(self, x):
+        if x.numel() > 0:
+            return super(BatchNorm2d, self).forward(x)
+        # get output shape
+        output_shape = x.shape
+        return _NewEmptyTensorOp.apply(x, output_shape)
 
 class Linear(torch.nn.Linear):
     """
@@ -369,16 +363,37 @@ def nonzero_tuple(x):
         return x.unsqueeze(0).nonzero().unbind(1)
     return x.nonzero().unbind(1)
 
-class SkipModule(torch.nn.Module):
-    def __init__(self, module_list):
-        super(SkipModule, self).__init__()
-        self.seq = torch.nn.Sequential(*module_list)
+class EltWiseModule(torch.nn.Module):
+    def __init__(self, operator='sum'):
+        super(EltWiseModule, self).__init__()
+        self.quantization = None
 
-    def forward(self, x):
-        output = self.seq(x) + x
+    def convert_to_quantization_version(self, quantization=None, index=-1):
+        args = quantization
+        logger = logging.getLogger(__name__ + '.Quantization')
+        if export_quantization and args is not None and hasattr(args, 'keyword'):
+            self.quantization = quantization
+
+    #def update_quantization_parameter(self, **parameters):
+    #    if not self.force_fp:
+    #        feedback = dict()
+    #        def merge_dict(feedback, fd):
+    #            if fd is not None:
+    #                for k in fd:
+    #                    if k in feedback:
+    #                        if isinstance(fd[k], list) and isinstance(feedback[k], list):
+    #                            feedback[k] = feedback[k] + fd[k]
+    #                    else:
+    #                        feedback[k] = fd[k]
+    #        fd = self.quant_activation.update_quantization(**parameters)
+    #        merge_dict(feedback, fd)
+    #        fd = self.quant_weight.update_quantization(**parameters)
+    #        merge_dict(feedback, fd)
+    #        return feedback
+    #    else:
+    #        return None
+
+    def forward(self, x, y):
+        output = x + y
         return output
-
-def skip_connect(module_list):
-    assert isinstance(module_list, list), "module_list should be a list"
-    return SkipModule(module_list)
 
