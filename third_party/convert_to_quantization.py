@@ -1,5 +1,5 @@
 
-def convert2quantization(model, cfg):
+def convert2quantization(model, cfg, verbose=print):
     # quantization on
     quantization = cfg.MODEL.QUANTIZATION if hasattr(cfg.MODEL, 'QUANTIZATION') else None
     if quantization is not None:

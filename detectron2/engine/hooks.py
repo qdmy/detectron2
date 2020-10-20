@@ -491,9 +491,9 @@ class QuantizationPolicy(HookBase):
         if self._policy_file in [None, '']:
             return
 
-        self._logger.info("Employing policy on init".format(self._policy_file))
-        deploy_on_init(self.trainer.model, self._policy_file, verbose=self._logger.info)
-        self._logger.info("Reading dynamic policy of 'iteration' section".format(self._policy_file))
+        #self._logger.info("Employing policy on init".format(self._policy_file))
+        #deploy_on_init(self.trainer.model, self._policy_file, verbose=self._logger.info)
+        self._logger.info("Reading dynamic policy of 'iteration' section from {}".format(self._policy_file))
         self._iteration_policies = read_policy(self._policy_file, section='iteration', verbose=self._logger.info)
         self._logger.info("iteration_policies: {}".format(self._iteration_policies))
 

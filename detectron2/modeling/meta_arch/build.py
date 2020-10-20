@@ -1,11 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import torch
+import logging
 
 from detectron2.utils.registry import Registry
 
 export_quant = True
 try:
     from third_party.convert_to_quantization import convert2quantization
+    from third_party.quantization.policy import deploy_on_init
 except:
     export_quant = False
 
@@ -26,6 +28,10 @@ def build_model(cfg):
     meta_arch = cfg.MODEL.META_ARCHITECTURE
     model = META_ARCH_REGISTRY.get(meta_arch)(cfg)
     if export_quant:
-        convert2quantization(model, cfg)
+        logger = logging.getLogger(__name__)
+        convert2quantization(model, cfg, verbose=logger.info)
+        pf = getattr(getattr(cfg.MODEL, 'QUANTIZATION', dict()), 'policy', None)
+        deploy_on_init(model, pf, verbose=logger.info)
+
     model.to(torch.device(cfg.MODEL.DEVICE))
     return model

@@ -74,6 +74,7 @@ class Conv2d(torch.nn.Conv2d):
         self.quant_activation = None
         self.quant_weight = None
         self.pads = None
+        self.force_fp = True
 
     def convert_to_quantization_version(self, quantization=None, index=-1):
         self.quantization = quantization
@@ -92,6 +93,28 @@ class Conv2d(torch.nn.Conv2d):
             device = self.weight.device
             self.quant_activation.to(device)
             self.quant_weight.to(device)
+            self.force_fp = False
+
+    def update_quantization_parameter(self, **parameters):
+        if not self.force_fp:
+            feedback = dict()
+            def merge_dict(feedback, fd):
+                if fd is not None:
+                    for k in fd:
+                        if k in feedback:
+                            if isinstance(fd[k], list) and isinstance(feedback[k], list):
+                                feedback[k] = feedback[k] + fd[k]
+                        else:
+                            feedback[k] = fd[k]
+            fd = self.quant_activation.update_quantization(**parameters)
+            merge_dict(feedback, fd)
+            fd = self.quant_weight.update_quantization(**parameters)
+            merge_dict(feedback, fd)
+            #fd = self.quant_output.update_quantization(**parameters)
+            #merge_dict(feedback, fd)
+            return feedback
+        else:
+            return None
 
     def forward(self, x):
         # torchscript does not support SyncBatchNorm yet
@@ -246,6 +269,25 @@ class Linear(torch.nn.Linear):
             device = self.weight.device
             self.quant_activation.to(device)
             self.quant_weight.to(device)
+
+    def update_quantization_parameter(self, **parameters):
+        if not self.force_fp:
+            feedback = dict()
+            def merge_dict(feedback, fd):
+                if fd is not None:
+                    for k in fd:
+                        if k in feedback:
+                            if isinstance(fd[k], list) and isinstance(feedback[k], list):
+                                feedback[k] = feedback[k] + fd[k]
+                        else:
+                            feedback[k] = fd[k]
+            fd = self.quant_activation.update_quantization(**parameters)
+            merge_dict(feedback, fd)
+            fd = self.quant_weight.update_quantization(**parameters)
+            merge_dict(feedback, fd)
+            return feedback
+        else:
+            return None
 
     def forward(self, x):
         if x.numel() == 0:
