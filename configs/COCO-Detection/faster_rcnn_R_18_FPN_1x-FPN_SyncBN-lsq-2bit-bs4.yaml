@@ -13,8 +13,8 @@ MODEL:
     NORM: "SyncBN-ReLU"
   RPN:
     HEAD_NORM: "SyncBN"
-  ROI_BOX_HEAD:
-    NORM: "SyncBN"
+  #ROI_BOX_HEAD:
+  #  NORM: "SyncBN"
   QUANTIZATION:
     scope: [
             'backbone.bottom_up.res2',
@@ -50,4 +50,4 @@ SOLVER:
   BASE_LR: 0.005
   STEPS: (240000, 320000)
   MAX_ITER: 360000
-OUTPUT_DIR: "output/faster_rcnn/R_18_1x-FPN_SyncBN-lsq-2bit-bs4"
+OUTPUT_DIR: "output/faster_rcnn/R_18_1x-FPN_SyncBN-lsq-2bit-bs4-linear_no_bn"
