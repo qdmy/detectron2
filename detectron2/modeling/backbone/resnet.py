@@ -47,6 +47,8 @@ class BasicBlock(CNNBlockBase):
         """
         super().__init__(in_channels, out_channels, stride)
 
+        self.relu_in_norm = 'ReLU' in norm
+        norm_ = norm.replace('ReLU', 'None')
         if in_channels != out_channels:
             self.shortcut = Conv2d(
                 in_channels,
@@ -54,7 +56,7 @@ class BasicBlock(CNNBlockBase):
                 kernel_size=1,
                 stride=stride,
                 bias=False,
-                norm=get_norm(norm, out_channels),
+                norm=get_norm(norm_, out_channels),
             )
         else:
             self.shortcut = None
@@ -76,7 +78,7 @@ class BasicBlock(CNNBlockBase):
             stride=1,
             padding=1,
             bias=False,
-            norm=get_norm(norm, out_channels),
+            norm=get_norm(norm_, out_channels),
         )
 
         for layer in [self.conv1, self.conv2, self.shortcut]:
@@ -85,7 +87,8 @@ class BasicBlock(CNNBlockBase):
 
     def forward(self, x):
         out = self.conv1(x)
-        out = F.relu_(out)
+        if not self.relu_in_norm:
+            out = F.relu_(out)
         out = self.conv2(out)
 
         if self.shortcut is not None:
@@ -130,6 +133,8 @@ class BottleneckBlock(CNNBlockBase):
         """
         super().__init__(in_channels, out_channels, stride)
 
+        self.relu_in_norm = 'ReLU' in norm
+        norm_ = norm.replace('ReLU', 'None')
         if in_channels != out_channels:
             self.shortcut = Conv2d(
                 in_channels,
@@ -137,7 +142,7 @@ class BottleneckBlock(CNNBlockBase):
                 kernel_size=1,
                 stride=stride,
                 bias=False,
-                norm=get_norm(norm, out_channels),
+                norm=get_norm(norm_, out_channels),
             )
         else:
             self.shortcut = None
@@ -173,7 +178,7 @@ class BottleneckBlock(CNNBlockBase):
             out_channels,
             kernel_size=1,
             bias=False,
-            norm=get_norm(norm, out_channels),
+            norm=get_norm(norm_, out_channels),
         )
 
         for layer in [self.conv1, self.conv2, self.conv3, self.shortcut]:
@@ -194,10 +199,12 @@ class BottleneckBlock(CNNBlockBase):
 
     def forward(self, x):
         out = self.conv1(x)
-        out = F.relu_(out)
+        if not self.relu_in_norm:
+            out = F.relu_(out)
 
         out = self.conv2(out)
-        out = F.relu_(out)
+        if not self.relu_in_norm:
+            out = F.relu_(out)
 
         out = self.conv3(out)
 
@@ -234,6 +241,8 @@ class DeformBottleneckBlock(CNNBlockBase):
         super().__init__(in_channels, out_channels, stride)
         self.deform_modulated = deform_modulated
 
+        self.relu_in_norm = 'ReLU' in norm
+        assert not self.relu_in_norm, 'ReLU inside norm is not supported for DeformBottleneckBlock'
         if in_channels != out_channels:
             self.shortcut = Conv2d(
                 in_channels,
@@ -341,6 +350,7 @@ class BasicStem(CNNBlockBase):
         """
         super().__init__(in_channels, out_channels, 4)
         self.in_channels = in_channels
+        self.relu_in_norm = 'ReLU' in norm
         self.conv1 = Conv2d(
             in_channels,
             out_channels,
@@ -354,7 +364,8 @@ class BasicStem(CNNBlockBase):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = F.relu_(x)
+        if not self.relu_in_norm:
+            x = F.relu_(x)
         x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         return x
 
