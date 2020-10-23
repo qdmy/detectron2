@@ -17,12 +17,12 @@ from torch.nn.modules.utils import _ntuple
 from detectron2.utils.env import TORCH_VERSION
 
 import logging
-export_quantization = True
+import_quantization = True
 try:
     import torch.nn.functional as F
     from third_party.quantization.quant import quantization as Quantization
 except:
-    export_quantization = False
+    import_quantization = False
 
 
 def cat(tensors: List[torch.Tensor], dim: int = 0):
@@ -79,7 +79,7 @@ class Conv2d(torch.nn.Conv2d):
     def convert_to_quantization_version(self, quantization=None, index=-1):
         self.quantization = quantization
         logger = logging.getLogger(__name__ + '.Quantization')
-        if self.quantization is not None and export_quantization:
+        if self.quantization is not None and import_quantization:
             if index == 0:
                 for i in ['proxquant', 'custom-update', 'real_skip']:
                     if i in quantization.keyword:
@@ -253,7 +253,7 @@ class Linear(torch.nn.Linear):
     def convert_to_quantization_version(self, quantization=None, index=-1):
         args = quantization
         logger = logging.getLogger(__name__ + '.Quantization')
-        if export_quantization and args is not None and hasattr(args, 'keyword'):
+        if import_quantization and args is not None and hasattr(args, 'keyword'):
             self.quantization = quantization
             self.force_fp = False
             self.quant_activation = Quantization(self.quantization, 'fm', [1, self.in_features, 1, 1], logger=logger)
@@ -371,7 +371,7 @@ class EltWiseModule(torch.nn.Module):
     def convert_to_quantization_version(self, quantization=None, index=-1):
         args = quantization
         logger = logging.getLogger(__name__ + '.Quantization')
-        if export_quantization and args is not None and hasattr(args, 'keyword'):
+        if import_quantization and args is not None and hasattr(args, 'keyword'):
             self.quantization = quantization
 
     #def update_quantization_parameter(self, **parameters):

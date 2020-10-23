@@ -93,9 +93,9 @@ class StandardRPNHead(nn.Module):
         norm = get_norm(norm, in_channels)
         self.conv = Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=norm is None, norm=norm)
         # 1x1 conv for predicting objectness logits
-        self.objectness_logits = nn.Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
+        self.objectness_logits = Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
         # 1x1 conv for predicting box2box transform deltas
-        self.anchor_deltas = nn.Conv2d(in_channels, num_anchors * box_dim, kernel_size=1, stride=1)
+        self.anchor_deltas = Conv2d(in_channels, num_anchors * box_dim, kernel_size=1, stride=1)
 
         for l in [self.conv, self.objectness_logits, self.anchor_deltas]:
             nn.init.normal_(l.weight, std=0.01)

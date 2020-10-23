@@ -641,10 +641,10 @@ _C.MODEL.RPN.HEAD_NORM = ""
 
 # quantization options
 _C.MODEL.QUANTIZATION = CN()
+_C.MODEL.QUANTIZATION.global_buffer = CN() # global_buffer
 _C.MODEL.QUANTIZATION.keyword = ['', ]
 _C.MODEL.QUANTIZATION.scope = ['', ]
 _C.MODEL.QUANTIZATION.stable = 0
-#_C.MODEL.QUANTIZATION.global_buffer = dict()
 _C.MODEL.QUANTIZATION.policy = ''
 _C.MODEL.QUANTIZATION.padding_after_quant = False
 # for feature map

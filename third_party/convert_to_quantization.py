@@ -12,7 +12,9 @@ def convert2quantization(model, cfg, verbose=print):
             cur = model
             find = True
             for attr in attrs:
-                if hasattr(cur, attr):
+                if attr == "":
+                    continue
+                elif hasattr(cur, attr):
                     cur = getattr(cur, attr)
                 else:
                     find = False
@@ -20,7 +22,7 @@ def convert2quantization(model, cfg, verbose=print):
                 for m in cur.modules():
                     if hasattr(m, 'convert_to_quantization_version'):
                         index = index + 1
-                        #print('quantize layer {}, index {}'.format(item, index))
+                        verbose('quantize layer {}, index {}'.format(item, index))
                         m.convert_to_quantization_version(quantization, index)
 
         ### progressive training on
@@ -52,4 +54,13 @@ def convert2quantization(model, cfg, verbose=print):
                                     )
                             #print('update_quantization layer {}'.format(item))
         ### progressive training off
+
+        ### Norm layer
+        cur = model
+        index = -1
+        for m in cur.modules(): ## add to quantization list
+            if hasattr(m, 'convert_norm_to_quantization_version'):
+                index = index + 1
+                m.convert_norm_to_quantization_version(quantization, index, verbose=verbose)
     # quantization off
+
