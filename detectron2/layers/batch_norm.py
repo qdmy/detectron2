@@ -10,6 +10,12 @@ from detectron2.utils import comm, env
 
 from .wrappers import BatchNorm2d
 
+import_quantization = True
+try:
+    from third_party.quantization.layers import norm as extra_norm
+    from functools import partial
+except:
+    import_quantization = False
 
 class FrozenBatchNorm2d(nn.Module):
     """
@@ -143,7 +149,7 @@ def get_norm(norm, out_channels):
             activation = pack[1]
         else:
             activation = 'NONE'
-        norm = {
+        norms = {
             "BN": BatchNorm2d,
             # Fixed in https://github.com/pytorch/pytorch/pull/36382
             "SyncBN": NaiveSyncBatchNorm if env.TORCH_VERSION <= (1, 5) else nn.SyncBatchNorm,
@@ -152,7 +158,11 @@ def get_norm(norm, out_channels):
             # for debugging:
             "nnSyncBN": nn.SyncBatchNorm,
             "naiveSyncBN": NaiveSyncBatchNorm,
-        }[norm]
+        }
+        if norm in norms:
+            norm = norms[norm]
+        elif import_quantization and norm in ['StaticBN']:
+                norm = partial(extra_norm, keyword=[norm])
 
         actvs = {
             "PReLU": nn.PReLU(),
