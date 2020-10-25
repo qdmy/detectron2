@@ -443,7 +443,7 @@ class LookupResourceUtilization(HookBase):
     """
     """
 
-    def __init__(self, trigger=[1, 200]):
+    def __init__(self, trigger=[1, 2, 5, 20, 200]):
         """
         Args:
             trigger (list of int): the number of iterations to trigger the lookup
