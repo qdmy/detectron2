@@ -21,6 +21,7 @@ import_quantization = True
 try:
     import torch.nn.functional as F
     from third_party.quantization.quant import quantization as Quantization
+    from third_party.quantization.dorefa import RoundSTE
 except:
     import_quantization = False
 
@@ -223,12 +224,98 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
     A wrapper around :class:`torch.nn.BatchNorm2d` to support zero-size tensor.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # quantization related attributes
+        self.enable = False
+        self.args = None
+        self.verbose = None
+        self.index = -1
+        self.input_scale = 1.0
+        self.tag = 'norm'
+        self.input_index = ""
+        def identify(x):
+            return x
+        self.quant_functions = { "RoundSTE": RoundSTE.apply, "identify": identify }
+        self.choice = 'identify'
+
+    def convert_norm_to_quantization_version(self, args=None, index=-1, verbose=print):
+        self.args = args
+        self.verbose = verbose
+        self.update_norm_quantization_parameter(index=index)
+        if args is not None:
+            assert hasattr(args, 'global_buffer'), "no global_buffer found in quantization args"
+
+    def update_norm_quantization_parameter(self, **parameters):
+        index = self.index
+        if 'index' in parameters:
+            index =  parameters['index']
+        if index != self.index:
+            self.index = index
+            self.verbose('update %s_index %r' % (self.tag, self.index))
+
+        if 'by_index' in parameters:
+            by_index = parameters['by_index']
+            if isinstance(by_index, list) or (isinstance(by_index, str) and by_index != "all"):
+                try:
+                    if not isinstance(by_index, list):
+                        by_index = by_index.split()
+                    by_index = [int(i) for i in by_index]
+                except (ValueError, SyntaxError) as e:
+                    self.verbose('unexpect string in by_index: {}'.format(by_index))
+
+            if by_index == 'all' or self.index in by_index:
+                if ('by_tag' in parameters and self.tag in parameters['by_tag']) or ('by_tag' not in parameters):
+                        for k, v in list(parameters.items()):
+                            if hasattr(self, "{}".format(k)):
+                                if isinstance(getattr(self, k), bool):
+                                    v = False if v in ['False', 'false', False] else True
+                                elif isinstance(getattr(self, k), int):
+                                    v = int(v)
+                                elif isinstance(getattr(self, k), float):
+                                    v = float(v)
+                                elif isinstance(getattr(self, k), str):
+                                    v = v.replace("'", "").replace('"', '')
+                                    if k == 'input_index' and 'same' in v:
+                                        v = v.replace('same', str(self.index))
+                                if not isinstance(getattr(self, k), torch.Tensor):
+                                    setattr(self, "{}".format(k), v)
+                                    self.verbose('update {}_{} to {} for index {}'.format(self.tag, k, getattr(self, k, 'Non-Exist'), self.index))
+                                    if k == 'input_index':
+                                        for tag in ['fm', 'wt']:
+                                            exist = 'Yes' if self.input_index + "-{}".format(tag) in self.args.global_buffer else 'No'
+                                            self.verbose("input_index of tag({}) exist in global buffer ? {}".format(tag, exist))
+        if self.enable:
+            assert self.args is not None, "args should not be None"
+            assert hasattr(self.args, 'global_buffer'), "no global_buffer found in quantization args"
+            assert self.choice in self.quant_functions, "unknown choice of quant_function {}".format(self.choice)
+
     def forward(self, x):
         if x.numel() > 0:
-            return super(BatchNorm2d, self).forward(x)
+            if self.enable:
+                scale = self.weight * (self.running_var + self.eps).rsqrt()
+                bias = self.bias / scale - self.running_mean
+                input_scale = self.input_scale
+                if self.input_index + "-fm" in self.args.global_buffer:
+                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-fm"].item()
+                if self.input_index + "-wt" in self.args.global_buffer:
+                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-wt"].item()
+                bias = self.quant_functions[self.choice](bias / input_scale) * input_scale
+                scale = scale.reshape(1, -1, 1, 1)
+                bias = bias.reshape(1, -1, 1, 1)
+                return (x + bias) * scale
+            else:
+                return super(BatchNorm2d, self).forward(x)
         # get output shape
         output_shape = x.shape
         return _NewEmptyTensorOp.apply(x, output_shape)
+
+    def __repr__(self):
+        base = super(BatchNorm2d, self).__repr__()
+        if self.enable:
+            base = base + "-choice({})-index({})-input({})".format(self.choice, self.index, self.input_index)
+        return base
 
 class Linear(torch.nn.Linear):
     """
