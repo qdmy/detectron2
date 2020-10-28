@@ -4,7 +4,7 @@ import fvcore.nn.weight_init as weight_init
 import torch.nn.functional as F
 from torch import nn
 
-from detectron2.layers import Conv2d, ShapeSpec, get_norm
+from detectron2.layers import Conv2d, ShapeSpec, get_norm, EltWiseModule
 
 from .backbone import Backbone
 from .build import BACKBONE_REGISTRY
@@ -105,6 +105,8 @@ class FPN(Backbone):
         self._fuse_type = fuse_type
         self.use_relu = activation
 
+        self.add = EltWiseModule()
+
     @property
     def size_divisibility(self):
         return self._size_divisibility
@@ -133,7 +135,7 @@ class FPN(Backbone):
         ):
             top_down_features = F.interpolate(prev_features, scale_factor=2, mode="nearest")
             lateral_features = lateral_conv(features)
-            prev_features = lateral_features + top_down_features
+            prev_features = self.add(lateral_features, top_down_features, mark_y=len(results))
             if self._fuse_type == "avg":
                 prev_features /= 2
             if self.use_relu:

@@ -61,6 +61,14 @@ def convert2quantization(model, cfg, verbose=print):
         for m in cur.modules(): ## add to quantization list
             if hasattr(m, 'convert_norm_to_quantization_version'):
                 index = index + 1
-                m.convert_norm_to_quantization_version(quantization, index, verbose=verbose)
+                m.convert_norm_to_quantization_version(quantization, index)
+
+        ### Eltwise layer
+        cur = model
+        index = -1
+        for m in cur.modules(): ## add to quantization list
+            if hasattr(m, 'convert_eltwise_to_quantization_version'):
+                index = index + 1
+                m.convert_eltwise_to_quantization_version(quantization, index)
     # quantization off
 

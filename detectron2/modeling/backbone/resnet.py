@@ -13,6 +13,7 @@ from detectron2.layers import (
     ModulatedDeformConv,
     ShapeSpec,
     get_norm,
+    EltWiseModule,
 )
 
 from .backbone import Backbone
@@ -81,6 +82,8 @@ class BasicBlock(CNNBlockBase):
             norm=get_norm(norm_, out_channels),
         )
 
+        self.add = EltWiseModule()
+
         for layer in [self.conv1, self.conv2, self.shortcut]:
             if layer is not None:  # shortcut can be None
                 weight_init.c2_msra_fill(layer)
@@ -96,7 +99,7 @@ class BasicBlock(CNNBlockBase):
         else:
             shortcut = x
 
-        out += shortcut
+        out = self.add(out, shortcut)
         out = F.relu_(out)
         return out
 
@@ -181,6 +184,8 @@ class BottleneckBlock(CNNBlockBase):
             norm=get_norm(norm_, out_channels),
         )
 
+        self.add = EltWiseModule()
+
         for layer in [self.conv1, self.conv2, self.conv3, self.shortcut]:
             if layer is not None:  # shortcut can be None
                 weight_init.c2_msra_fill(layer)
@@ -213,7 +218,7 @@ class BottleneckBlock(CNNBlockBase):
         else:
             shortcut = x
 
-        out += shortcut
+        out = self.add(out, shortcut)
         out = F.relu_(out)
         return out
 

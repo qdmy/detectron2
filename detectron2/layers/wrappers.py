@@ -19,6 +19,7 @@ from detectron2.utils.env import TORCH_VERSION
 import logging
 import_quantization = True
 try:
+    import numpy as np
     import torch.nn.functional as F
     from third_party.quantization.quant import quantization as Quantization
     from third_party.quantization.dorefa import RoundSTE
@@ -230,7 +231,8 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
         # quantization related attributes
         self.enable = False
         self.args = None
-        self.verbose = None
+        self.logger = logging.getLogger(__name__ + '.Quantization')
+        self.verbose = self.logger.info
         self.index = -1
         self.input_scale = 1.0
         self.tag = 'norm'
@@ -240,9 +242,8 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
         self.quant_functions = { "RoundSTE": RoundSTE.apply, "identify": identify }
         self.choice = 'identify'
 
-    def convert_norm_to_quantization_version(self, args=None, index=-1, verbose=print):
+    def convert_norm_to_quantization_version(self, args=None, index=-1):
         self.args = args
-        self.verbose = verbose
         self.update_norm_quantization_parameter(index=index)
         if args is not None:
             assert hasattr(args, 'global_buffer'), "no global_buffer found in quantization args"
@@ -269,6 +270,8 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
                 if ('by_tag' in parameters and self.tag in parameters['by_tag']) or ('by_tag' not in parameters):
                         for k, v in list(parameters.items()):
                             if hasattr(self, "{}".format(k)):
+                                if isinstance(v, str):
+                                    v = v.replace("'", "").replace('"', '')
                                 if isinstance(getattr(self, k), bool):
                                     v = False if v in ['False', 'false', False] else True
                                 elif isinstance(getattr(self, k), int):
@@ -276,7 +279,6 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
                                 elif isinstance(getattr(self, k), float):
                                     v = float(v)
                                 elif isinstance(getattr(self, k), str):
-                                    v = v.replace("'", "").replace('"', '')
                                     if k == 'input_index' and 'same' in v:
                                         v = v.replace('same', str(self.index))
                                 if not isinstance(getattr(self, k), torch.Tensor):
@@ -298,9 +300,10 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
                 bias = self.bias / scale - self.running_mean
                 input_scale = self.input_scale
                 if self.input_index + "-fm" in self.args.global_buffer:
-                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-fm"].item()
+                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-fm"].abs().item()
                 if self.input_index + "-wt" in self.args.global_buffer:
-                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-wt"].item()
+                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-wt"].abs().item()
+                self.args.global_buffer[self.input_index + "-norm"] = input_scale * scale.cpu().detach().numpy()
                 bias = self.quant_functions[self.choice](bias / input_scale) * input_scale
                 scale = scale.reshape(1, -1, 1, 1)
                 bias = bias.reshape(1, -1, 1, 1)
@@ -451,36 +454,125 @@ def nonzero_tuple(x):
     return x.nonzero().unbind(1)
 
 class EltWiseModule(torch.nn.Module):
-    def __init__(self, operator='sum'):
+    def __init__(self, operator='sum', args=None):
         super(EltWiseModule, self).__init__()
-        self.quantization = None
 
-    def convert_to_quantization_version(self, quantization=None, index=-1):
-        args = quantization
-        logger = logging.getLogger(__name__ + '.Quantization')
-        if import_quantization and args is not None and hasattr(args, 'keyword'):
-            self.quantization = quantization
+        # quantization related attributes
+        self.enable = False
+        self.args = args
+        self.index = -1
+        self.tag = 'eltwise'
+        self.x_index = []
+        self.y_index = []
+        self.logger = logging.getLogger(__name__ + '.Quantization')
+        self.verbose = self.logger.info
 
-    #def update_quantization_parameter(self, **parameters):
-    #    if not self.force_fp:
-    #        feedback = dict()
-    #        def merge_dict(feedback, fd):
-    #            if fd is not None:
-    #                for k in fd:
-    #                    if k in feedback:
-    #                        if isinstance(fd[k], list) and isinstance(feedback[k], list):
-    #                            feedback[k] = feedback[k] + fd[k]
-    #                    else:
-    #                        feedback[k] = fd[k]
-    #        fd = self.quant_activation.update_quantization(**parameters)
-    #        merge_dict(feedback, fd)
-    #        fd = self.quant_weight.update_quantization(**parameters)
-    #        merge_dict(feedback, fd)
-    #        return feedback
-    #    else:
-    #        return None
+    def convert_eltwise_to_quantization_version(self, args=None, index=-1):
+        if args is not None and import_quantization:
+            self.args = args
+            self.update_eltwise_quantization_parameter(index=index)
 
-    def forward(self, x, y):
+    def update_eltwise_quantization_parameter(self, **parameters):
+        index = self.index
+        if 'index' in parameters:
+            index =  parameters['index']
+        if index != self.index:
+            self.index = index
+            self.verbose('update %s_index %r' % (self.tag, self.index))
+
+        if 'by_index' in parameters:
+            by_index = parameters['by_index']
+            if isinstance(by_index, list) or (isinstance(by_index, str) and by_index != "all"):
+                try:
+                    if not isinstance(by_index, list):
+                        by_index = by_index.split()
+                    by_index = [int(i) for i in by_index]
+                except (ValueError, SyntaxError) as e:
+                    self.verbose('unexpect string in by_index: {}'.format(by_index))
+
+            if by_index == 'all' or self.index in by_index:
+                if ('by_tag' in parameters and self.tag in parameters['by_tag']) or ('by_tag' not in parameters):
+                        for k, v in list(parameters.items()):
+                            if hasattr(self, "{}".format(k)):
+                                if isinstance(v, str):
+                                    v = v.replace("'", "").replace('"', '')
+                                if isinstance(getattr(self, k), bool):
+                                    v = False if v in ['False', 'false', False] else True
+                                elif isinstance(getattr(self, k), int):
+                                    v = int(v)
+                                elif isinstance(getattr(self, k), float):
+                                    v = float(v)
+                                elif isinstance(getattr(self, k), list):
+                                    if k in ['x_index', 'y_index']:
+                                        v = v.split(',') if ',' in v else v.split(' ')
+                                setattr(self, "{}".format(k), v)
+                                self.verbose('update {}_{} to {} for index {}'.format(self.tag, k, getattr(self, k, 'Non-Exist'), self.index))
+
+        if self.enable:
+            assert self.args is not None, "args should not be None"
+            assert hasattr(self.args, 'global_buffer'), "no global_buffer found in quantization args"
+
+    def coordinate(self, mark_x=0, mark_y=0):
+        if mark_x < len(self.x_index):
+            alphaX = self.args.global_buffer[self.x_index[mark_x]]
+        else:
+            raise RuntimeError("Cannot find mark")
+        if mark_y < len(self.y_index):
+            alphaY = self.args.global_buffer[self.y_index[mark_y]]
+        else:
+            raise RuntimeError("Cannot find mark")
+
+        alpha = np.ones_like(alphaX)
+        scale = np.ones_like(alphaX)
+        for i, j, m, n in zip(alphaX, alphaY, alpha, scale):
+            m = j if i >= j else i
+            n = i / j if i >= j else j / i
+        self.args.global_buffer['alpha-{}-{}'.format(self.index, self.tag)] = alpha
+
+        error = np.ones_like(alphaX)
+        shift = np.ones_like(alphaX)
+        multi = np.ones_like(alphaX)
+        for i in range(16):
+            for cur, his, shi in zip(scale, error, shift):
+                cur = cur * pow(2.0, i)
+                cur = abs(round(cur) - cur)
+                if cur < his:
+                    shi = i
+                    his = cur
+
+        for denominator, numerator, fraction in zip(shift, multi, scale):
+            denominator = pow(2.0, denominator)
+            numerator = round(fraction * denominator)
+
+        scale = multi / shift/ scale
+        scale_x = np.ones_like(alphaX)
+        scale_y = np.ones_like(alphaX)
+        for x, y, z, m, n in zip(scale_x, scale_y, scale, alphaX, alphaY):
+            x = z if m >= n  else 1.0
+            y = 1.0 if m >= n  else z
+
+        return scale_x, scale_y
+
+    def coordinate_addition(self, x, y, mark_x=0, mark_y=0):
+        scale_x, scale_y = self.coordinate(mark_x, mark_y)
+        scale_x = torch.from_numpy(scale_x).to(x.device)
+        scale_y = torch.from_numpy(scale_y).to(x.device)
+        scale_x = scale_x.reshape(1, -1, 1, 1)
+        scale_y = scale_y.reshape(1, -1, 1, 1)
+        x = x * scale_x
+        y = y * scale_y
+        return x, y
+
+    def forward(self, x, y, mark_x=0, mark_y=0):
+        if self.enable:
+            x, y = self.coordinate_addition(x, y, mark_x, mark_y)
         output = x + y
         return output
+
+    def __repr__(self):
+        base = 'EltWiseModule()'
+        if self.enable:
+            base = base + "-index({})".format(self.index)
+        return base
+
 
