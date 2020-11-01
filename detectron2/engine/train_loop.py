@@ -263,6 +263,16 @@ class SimpleTrainer(TrainerBase):
 
     def _detect_anomaly(self, losses, loss_dict):
         if not torch.isfinite(losses).all():
+            if self.cfg.DEBUG:
+                print(
+                "Loss became infinite or NaN at iteration={}!\nloss_dict = {}".format(
+                    self.iter, loss_dict
+                    )
+                )
+                print("Enter pdb. Access resource by self.model/self.optimizer")
+                import pdb
+                pdb.set_trace()
+
             raise FloatingPointError(
                 "Loss became infinite or NaN at iteration={}!\nloss_dict = {}".format(
                     self.iter, loss_dict

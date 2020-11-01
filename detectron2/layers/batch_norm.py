@@ -152,7 +152,10 @@ def get_norm(norm, out_channels):
             "nnSyncBN": nn.SyncBatchNorm,
             "naiveSyncBN": NaiveSyncBatchNorm,
         }
-        norm = norms[norm]
+        if norm in norms:
+            norm = norms[norm]
+        else:
+            norm = None
 
         actvs = {
             "PReLU": nn.PReLU(),
@@ -166,9 +169,15 @@ def get_norm(norm, out_channels):
             actv = actvs[activation]
 
     if actv is None:
-        return norm(out_channels)
+        if norm is None:
+            return nn.Sequential()
+        else:
+            return norm(out_channels)
     else:
-        return nn.Sequential(norm(out_channels), actv)
+        if norm is None:
+            return actv
+        else:
+            return nn.Sequential(norm(out_channels), actv)
 
 
 class AllReduce(Function):

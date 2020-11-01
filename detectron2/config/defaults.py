@@ -21,6 +21,9 @@ _C = CN()
 # changes happen. It's recommended to keep a VERSION in your config file.
 _C.VERSION = 2
 
+# Debug mode
+_C.DEBUG = False
+
 _C.MODEL = CN()
 _C.MODEL.LOAD_PROPOSALS = False
 _C.MODEL.MASK_ON = False
