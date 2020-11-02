@@ -650,6 +650,7 @@ _C.MODEL.QUANTIZATION.scope = ['', ]
 _C.MODEL.QUANTIZATION.stable = 0
 _C.MODEL.QUANTIZATION.policy = ''
 _C.MODEL.QUANTIZATION.padding_after_quant = False
+_C.MODEL.QUANTIZATION.probe_list = []
 # for feature map
 _C.MODEL.QUANTIZATION.fm_enable = False
 _C.MODEL.QUANTIZATION.fm_bit = 32.0
