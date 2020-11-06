@@ -135,7 +135,7 @@ class FPN(Backbone):
         ):
             top_down_features = F.interpolate(prev_features, scale_factor=2, mode="nearest")
             lateral_features = lateral_conv(features)
-            prev_features = self.add(lateral_features, top_down_features, mark_y=len(results))
+            prev_features = self.add(lateral_features, top_down_features, mark_x=len(results)-1, mark_y=len(results)-1)
             if self._fuse_type == "avg":
                 prev_features /= 2
             if self.use_relu:

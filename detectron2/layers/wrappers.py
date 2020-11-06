@@ -303,6 +303,8 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
                     input_scale = input_scale * self.args.global_buffer[self.input_index + "-fm"].abs().item()
                 if self.input_index + "-wt" in self.args.global_buffer:
                     input_scale = input_scale * self.args.global_buffer[self.input_index + "-wt"].abs().item()
+                if self.input_index + "-norm" not in self.args.global_buffer:
+                    self.verbose("add {} to global_buffer".format(self.input_index + "-norm"))
                 self.args.global_buffer[self.input_index + "-norm"] = input_scale * scale.cpu().detach().numpy()
                 bias = self.quant_functions[self.choice](bias / input_scale) * input_scale
                 scale = scale.reshape(1, -1, 1, 1)
@@ -502,9 +504,8 @@ class EltWiseModule(torch.nn.Module):
                                     v = int(v)
                                 elif isinstance(getattr(self, k), float):
                                     v = float(v)
-                                elif isinstance(getattr(self, k), list):
-                                    if k in ['x_index', 'y_index']:
-                                        v = v.split(',') if ',' in v else v.split(' ')
+                                elif isinstance(getattr(self, k), list) and isinstance(v, str):
+                                    v = v.split(',') if ',' in v else v.split(' ')
                                 setattr(self, "{}".format(k), v)
                                 self.verbose('update {}_{} to {} for index {}'.format(self.tag, k, getattr(self, k, 'Non-Exist'), self.index))
 
@@ -516,17 +517,21 @@ class EltWiseModule(torch.nn.Module):
         if mark_x < len(self.x_index):
             alphaX = self.args.global_buffer[self.x_index[mark_x]]
         else:
-            raise RuntimeError("Cannot find mark")
+            self.verbose('cannot find X mark {} for EltWise layer index {}. Disable quantization.'.format(mark_x, self.index))
+            return None, None
         if mark_y < len(self.y_index):
             alphaY = self.args.global_buffer[self.y_index[mark_y]]
         else:
-            raise RuntimeError("Cannot find mark")
+            self.verbose('cannot find Y mark {} for EltWise layer index {}. Disable quantization '.format(mark_y, self.index))
+            return None, None
 
         alpha = np.ones_like(alphaX)
         scale = np.ones_like(alphaX)
         for i, j, m, n in zip(alphaX, alphaY, alpha, scale):
             m = j if i >= j else i
             n = i / j if i >= j else j / i
+        if 'alpha-{}-{}'.format(self.index, self.tag) not in self.args.global_buffer:
+            self.verbose("add {} to global_buffer".format('alpha-{}-{}'.format(self.index, self.tag)))
         self.args.global_buffer['alpha-{}-{}'.format(self.index, self.tag)] = alpha
 
         error = np.ones_like(alphaX)
@@ -544,17 +549,20 @@ class EltWiseModule(torch.nn.Module):
             denominator = pow(2.0, denominator)
             numerator = round(fraction * denominator)
 
-        scale = multi / shift/ scale
+        scale = multi / shift / scale
         scale_x = np.ones_like(alphaX)
         scale_y = np.ones_like(alphaX)
         for x, y, z, m, n in zip(scale_x, scale_y, scale, alphaX, alphaY):
-            x = z if m >= n  else 1.0
-            y = 1.0 if m >= n  else z
+            x = z if m >= n else 1.0
+            y = 1.0 if m >= n else z
 
         return scale_x, scale_y
 
     def coordinate_addition(self, x, y, mark_x=0, mark_y=0):
         scale_x, scale_y = self.coordinate(mark_x, mark_y)
+        if scale_x is None or scale_y is None:
+            self.enable = False
+            return x, y
         scale_x = torch.from_numpy(scale_x).to(x.device)
         scale_y = torch.from_numpy(scale_y).to(x.device)
         scale_x = scale_x.reshape(1, -1, 1, 1)
