@@ -452,10 +452,17 @@ class RetinaNetHead(nn.Module):
 
         self.cls_subnet = nn.Sequential(*cls_subnet)
         self.bbox_subnet = nn.Sequential(*bbox_subnet)
-        self.cls_score = nn.Conv2d(
+
+        # wrapper first and last layer using Conv2d if QUANTIZATION.policy file is given
+        pf = getattr(getattr(cfg.MODEL, "QUANTIZATION", dict()), "policy", None)
+        if pf in [None, '']:
+            conv_func = nn.Conv2d
+        else:
+            conv_func = Conv2d
+        self.cls_score = conv_func(
             in_channels, num_anchors * num_classes, kernel_size=3, stride=1, padding=1
         )
-        self.bbox_pred = nn.Conv2d(in_channels, num_anchors * 4, kernel_size=3, stride=1, padding=1)
+        self.bbox_pred = conv_func(in_channels, num_anchors * 4, kernel_size=3, stride=1, padding=1)
 
         # Initialization
         for modules in [self.cls_subnet, self.bbox_subnet, self.cls_score, self.bbox_pred]:
