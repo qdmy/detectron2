@@ -47,3 +47,4 @@ wheels/
 !/datasets/*.*
 /projects/*/datasets
 /models
+pretrained
