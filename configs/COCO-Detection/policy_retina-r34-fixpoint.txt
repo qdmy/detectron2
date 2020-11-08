@@ -1,0 +1,20 @@
+
+on init:
+  by_index: 8
+  by_tag: fm
+  enable: False
+
+  by_index: 8
+  by_tag: wt
+  enable: True
+  bit: 8
+
+  by_index : 52 53
+  enable: True
+  bit: 8
+
+
+  by_index: 52 53 8
+  stable: 10
+  correlate: 0.8
+  adaptive: 'none'
