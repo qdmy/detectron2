@@ -13,6 +13,7 @@ from fvcore.common.timer import Timer
 from PIL import Image
 
 from detectron2.structures import Boxes, BoxMode, PolygonMasks
+from detectron2.utils import comm
 
 from .. import DatasetCatalog, MetadataCatalog
 
@@ -51,6 +52,9 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
         1. This function does not read the image files.
            The results do not have the "image" field.
     """
+    local = json_file.replace('.json', '-{}.json'.format(comm.get_rank()))
+    if os.path.isfile(local):
+        json_file = local
     logger.info("Enter load_coco_json to read {}".format(json_file))
     from pycocotools.coco import COCO
 
