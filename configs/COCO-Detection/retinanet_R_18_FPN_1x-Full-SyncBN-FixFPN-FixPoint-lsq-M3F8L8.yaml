@@ -32,5 +32,5 @@ MODEL:
     wt_adaptive: "var-mean"
     policy: 'configs/COCO-Detection/policy_retina-r18-fixpoint.txt'
 SOLVER:
-  BASE_LR: 0.002  # decrease by 5
+  BASE_LR: 0.001  # decrease by 10
 OUTPUT_DIR: output/coco-detection/retinanet_R_18_FPN_1x-Full_SyncBN-FixFPN-FixPoint-lsq-M3F8L8
