@@ -157,6 +157,14 @@ class Conv2d(torch.nn.Conv2d):
                     return empty
 
         if self.quantization is not None:
+            if 'nop-conv' in self.quantization.keyword and not self.training:
+                output_shape = [
+                        (i + 2 * p - (di * (k - 1) + 1)) // s + 1
+                        for i, p, di, k, s in zip(x.shape[-2:], self.padding, self.dilation, self.kernel_size, self.stride)]
+                output_shape = [x.shape[0], self.weight.shape[0]] + output_shape
+                empty = x.new_empty(output_shape)
+                return empty
+
             weight = self.quant_weight(self.weight)
             if self.padding_after_quant:
                 x = self.quant_activation(x)
