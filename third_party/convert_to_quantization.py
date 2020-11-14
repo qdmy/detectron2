@@ -1,4 +1,24 @@
 
+import torch
+import os
+
+def forward_hook(module, input, output):
+    name = module.name
+    global_buffer = module.global_buffer
+
+    if name in global_buffer:
+        return
+
+    index = global_buffer['index']
+    index = index + 1
+    global_buffer['index'] = index
+    global_buffer[name] = 'Saved'
+    prefix = global_buffer['prefix'] if 'prefix' in global_buffer else ''
+    verbose = global_buffer['verbose'] if 'verbose' in global_buffer else print
+    verbose("saving tensors of {} {}".format(name, index))
+    torch.save(input[0], "{}{}-{}-input.pth".format(prefix, name, index))
+    torch.save(output[0], "{}{}-{}-output.pth".format(prefix, name, index))
+
 def convert2quantization(model, cfg, verbose=print):
     # quantization on
     quantization = cfg.MODEL.QUANTIZATION if hasattr(cfg.MODEL, 'QUANTIZATION') else None
@@ -71,4 +91,28 @@ def convert2quantization(model, cfg, verbose=print):
                 index = index + 1
                 m.convert_eltwise_to_quantization_version(quantization, index)
     # quantization off
+
+    # enable probe on
+    if quantization is not None and 'probe' in quantization.keyword:
+        cur = model
+        global_buffer = dict()
+        global_buffer['index'] = 0
+        global_buffer['prefix'] = 'log/probe-'
+        global_buffer['verbose'] = verbose
+        if not os.path.exists('log'):
+            os.mkdir('log')
+        for name, m in cur.named_modules():
+            probe_enable = False
+            for i in quantization.probe_list:
+                if i in name:
+                    probe_enable = True
+
+            if probe_enable:
+            #if isinstance(m, (torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm, torch.nn.GroupNorm, torch.nn.Conv2d)):
+                m.register_forward_hook(forward_hook)
+                m.name = name
+                m.global_buffer = global_buffer
+                verbose('register forward_hook for module {}'.format(m.name))
+    # enable probe off
+
 
