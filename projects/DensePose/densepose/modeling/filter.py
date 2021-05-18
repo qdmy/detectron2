@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 
 from typing import List
 import torch
@@ -13,7 +13,7 @@ class DensePoseDataFilter(object):
         self.iou_threshold = cfg.MODEL.ROI_DENSEPOSE_HEAD.FG_IOU_THRESHOLD
         self.keep_masks = cfg.MODEL.ROI_DENSEPOSE_HEAD.COARSE_SEGM_TRAINED_BY_MASKS
 
-    @torch.no_grad()
+    @torch.no_grad()  # pyre-ignore[56]
     def __call__(self, features: List[torch.Tensor], proposals_with_targets: List[Instances]):
         """
         Filters proposals with targets to keep only the ones relevant for
@@ -54,7 +54,7 @@ class DensePoseDataFilter(object):
             # apply match threshold for densepose head
             iou = matched_boxlist_iou(gt_boxes, est_boxes)
             iou_select = iou > self.iou_threshold
-            proposals_per_image = proposals_per_image[iou_select]
+            proposals_per_image = proposals_per_image[iou_select]  # pyre-ignore[6]
 
             N_gt_boxes = len(proposals_per_image.gt_boxes)
             assert N_gt_boxes == len(proposals_per_image.proposal_boxes), (
@@ -86,7 +86,7 @@ class DensePoseDataFilter(object):
             #     feature_mask[i] = 0
             #     continue
             if len(selected_indices) != N_gt_boxes:
-                proposals_per_image = proposals_per_image[selected_indices]
+                proposals_per_image = proposals_per_image[selected_indices]  # pyre-ignore[6]
             assert len(proposals_per_image.gt_boxes) == len(proposals_per_image.proposal_boxes)
             proposals_filtered.append(proposals_per_image)
         # features_filtered = [feature[feature_mask] for feature in features]

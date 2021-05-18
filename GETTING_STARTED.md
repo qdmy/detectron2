@@ -7,8 +7,6 @@ see our [Colab Notebook](https://colab.research.google.com/drive/16jcaJoc6bCFAQ9
 which covers how to run inference with an
 existing model, and how to train a builtin model on a custom dataset.
 
-For more advanced tutorials, refer to our [documentation](https://detectron2.readthedocs.io/tutorials/extend.html).
-
 
 ### Inference Demo with Pre-trained Models
 
@@ -61,8 +59,6 @@ To train on 1 GPU, you may need to [change some parameters](https://arxiv.org/ab
   --config-file ../configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml \
   --num-gpus 1 SOLVER.IMS_PER_BATCH 2 SOLVER.BASE_LR 0.0025
 ```
-
-For most models, CPU training is not supported.
 
 To evaluate a model's performance, use
 ```

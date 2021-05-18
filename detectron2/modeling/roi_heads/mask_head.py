@@ -1,5 +1,5 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-from typing import Any, List
+# Copyright (c) Facebook, Inc. and its affiliates.
+from typing import List
 import fvcore.nn.weight_init as weight_init
 import torch
 from torch import nn
@@ -158,21 +158,23 @@ class BaseMaskRCNNHead(nn.Module):
     """
 
     @configurable
-    def __init__(self, *, vis_period=0):
+    def __init__(self, *, loss_weight: float = 1.0, vis_period: int = 0):
         """
         NOTE: this interface is experimental.
 
         Args:
+            loss_weight (float): multiplier of the loss
             vis_period (int): visualization period
         """
         super().__init__()
         self.vis_period = vis_period
+        self.loss_weight = loss_weight
 
     @classmethod
     def from_config(cls, cfg, input_shape):
         return {"vis_period": cfg.VIS_PERIOD}
 
-    def forward(self, x, instances: List[Instances]) -> Any:
+    def forward(self, x, instances: List[Instances]):
         """
         Args:
             x: input region feature(s) provided by :class:`ROIHeads`.
@@ -188,7 +190,7 @@ class BaseMaskRCNNHead(nn.Module):
         """
         x = self.layers(x)
         if self.training:
-            return {"loss_mask": mask_rcnn_loss(x, instances, self.vis_period)}
+            return {"loss_mask": mask_rcnn_loss(x, instances, self.vis_period) * self.loss_weight}
         else:
             mask_rcnn_inference(x, instances)
             return instances
@@ -217,7 +219,8 @@ class MaskRCNNConvUpsampleHead(BaseMaskRCNNHead, nn.Sequential):
 
         Args:
             input_shape (ShapeSpec): shape of the input feature
-            num_classes (int): the number of classes. 1 if using class agnostic prediction.
+            num_classes (int): the number of foreground classes (i.e. background is not
+                included). 1 if using class agnostic prediction.
             conv_dims (list[int]): a list of N>0 integers representing the output dimensions
                 of N-1 conv layers and the last upsample layer.
             conv_norm (str or callable): normalization for the conv layers.

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -54,7 +54,7 @@ class FieldEntrySelector(EntrySelector):
         Predicate that checks strict equality for the specified entry field
         """
 
-        def __init__(self, name: str, typespec: str, value: str):
+        def __init__(self, name: str, typespec: Optional[str], value: str):
             import builtins
 
             self.name = name
@@ -69,7 +69,7 @@ class FieldEntrySelector(EntrySelector):
         Predicate that checks whether an entry field falls into the specified range
         """
 
-        def __init__(self, name: str, typespec: str, vmin: str, vmax: str):
+        def __init__(self, name: str, typespec: Optional[str], vmin: str, vmax: str):
             import builtins
 
             self.name = name

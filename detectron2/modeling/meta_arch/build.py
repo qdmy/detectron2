@@ -1,16 +1,8 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 import torch
-import logging
-import sys
 
+from detectron2.utils.logger import _log_api_usage
 from detectron2.utils.registry import Registry
-
-import_quant = True
-try:
-    from third_party.convert_to_quantization import convert2quantization
-    from third_party.quantization.policy import deploy_on_init
-except:
-    import_quant = False
 
 META_ARCH_REGISTRY = Registry("META_ARCH")  # noqa F401 isort:skip
 META_ARCH_REGISTRY.__doc__ = """
@@ -29,6 +21,12 @@ def build_model(cfg):
     meta_arch = cfg.MODEL.META_ARCHITECTURE
     model = META_ARCH_REGISTRY.get(meta_arch)(cfg)
     logger = logging.getLogger(__name__)
+    import_quant = True
+    try:
+        from third_party.convert_to_quantization import convert2quantization
+        from third_party.quantization.policy import deploy_on_init
+    except:
+        import_quant = False
     if import_quant:
         convert2quantization(model, cfg, verbose=logger.info)
         pf = getattr(getattr(cfg.MODEL, 'QUANTIZATION', dict()), 'policy', None)
@@ -37,4 +35,5 @@ def build_model(cfg):
         logger.info("import quantization module failed")
 
     model.to(torch.device(cfg.MODEL.DEVICE))
+    _log_api_usage("modeling.meta_arch." + meta_arch)
     return model

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 import logging
 import numpy as np
 import torch
@@ -234,9 +234,8 @@ class RROIHeads(StandardROIHeads):
                    then the ground-truth box is random)
                 - gt_classes: the ground-truth classification lable for each proposal
         """
-        gt_boxes = [x.gt_boxes for x in targets]
         if self.proposal_append_gt:
-            proposals = add_ground_truth_to_proposals(gt_boxes, proposals)
+            proposals = add_ground_truth_to_proposals(targets, proposals)
 
         proposals_with_gt = []
 
@@ -258,11 +257,6 @@ class RROIHeads(StandardROIHeads):
             if has_gt:
                 sampled_targets = matched_idxs[sampled_idxs]
                 proposals_per_image.gt_boxes = targets_per_image.gt_boxes[sampled_targets]
-            else:
-                gt_boxes = RotatedBoxes(
-                    targets_per_image.gt_boxes.tensor.new_zeros((len(sampled_idxs), 5))
-                )
-                proposals_per_image.gt_boxes = gt_boxes
 
             num_bg_samples.append((gt_classes == self.num_classes).sum().item())
             num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])

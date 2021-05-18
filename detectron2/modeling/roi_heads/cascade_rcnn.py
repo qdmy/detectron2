@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 from typing import List
 import torch
 from torch import nn
@@ -31,7 +31,7 @@ class _ScaleGradient(Function):
 @ROI_HEADS_REGISTRY.register()
 class CascadeROIHeads(StandardROIHeads):
     """
-    Implement :paper:`Cascade R-CNN`.
+    The ROI heads that implement :paper:`Cascade R-CNN`.
     """
 
     @configurable

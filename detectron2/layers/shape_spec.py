@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 from collections import namedtuple
 
 
@@ -16,5 +16,5 @@ class ShapeSpec(namedtuple("_ShapeSpec", ["channels", "height", "width", "stride
         stride:
     """
 
-    def __new__(cls, *, channels=None, height=None, width=None, stride=None):
+    def __new__(cls, channels=None, height=None, width=None, stride=None):
         return super().__new__(cls, channels, height, width, stride)

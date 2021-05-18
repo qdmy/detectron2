@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 from typing import List
 import torch
 from torch import nn
@@ -120,10 +120,7 @@ def keypoint_rcnn_inference(pred_keypoint_logits: torch.Tensor, pred_instances: 
     pred_keypoint_logits = pred_keypoint_logits.detach()
     keypoint_results = heatmaps_to_keypoints(pred_keypoint_logits, bboxes_flat.detach())
     num_instances_per_image = [len(i) for i in pred_instances]
-    # slicing multiple dimensions with sequences is not supported by torchscript
-    # https://github.com/pytorch/pytorch/issues/43943
-    idx = torch.tensor([0, 1, 3])
-    keypoint_results = keypoint_results[:, :, idx].split(num_instances_per_image, dim=0)
+    keypoint_results = keypoint_results[:, :, [0, 1, 3]].split(num_instances_per_image, dim=0)
     heatmap_results = pred_keypoint_logits.split(num_instances_per_image, dim=0)
 
     for keypoint_results_per_image, heatmap_results_per_image, instances_per_image in zip(
@@ -182,7 +179,7 @@ class BaseKeypointRCNNHead(nn.Module):
     def forward(self, x, instances: List[Instances]):
         """
         Args:
-            x: input region feature(s) provided by :class:`ROIHeads`.
+            x: input 4D region feature(s) provided by :class:`ROIHeads`.
             instances (list[Instances]): contains the boxes & labels corresponding
                 to the input features.
                 Exact format is up to its caller to decide.
@@ -195,7 +192,6 @@ class BaseKeypointRCNNHead(nn.Module):
         """
         x = self.layers(x)
         if self.training:
-            assert not torch.jit.is_scripting()
             num_images = len(instances)
             normalizer = (
                 None if self.loss_normalizer == "visible" else num_images * self.loss_normalizer

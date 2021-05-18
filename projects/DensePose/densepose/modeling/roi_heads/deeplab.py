@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 
 import fvcore.nn.weight_init as weight_init
 import torch
@@ -32,10 +32,12 @@ class DensePoseDeepLabHead(nn.Module):
         n_channels = input_channels
 
         self.ASPP = ASPP(input_channels, [6, 12, 56], n_channels)  # 6, 12, 56
+        # pyre-fixme[29]: `Union[nn.Module, torch.Tensor]` is not a function.
         self.add_module("ASPP", self.ASPP)
 
         if self.use_nonlocal:
             self.NLBlock = NONLocalBlock2D(input_channels, bn_layer=True)
+            # pyre-fixme[29]: `Union[nn.Module, torch.Tensor]` is not a function.
             self.add_module("NLBlock", self.NLBlock)
         # weight_init.c2_msra_fill(self.ASPP)
 
@@ -53,6 +55,7 @@ class DensePoseDeepLabHead(nn.Module):
             weight_init.c2_msra_fill(layer)
             n_channels = hidden_dim
             layer_name = self._get_layer_name(i)
+            # pyre-fixme[29]: `Union[nn.Module, torch.Tensor]` is not a function.
             self.add_module(layer_name, layer)
         self.n_out_channels = hidden_dim
         # initialize_module_params(self)
@@ -78,7 +81,7 @@ class DensePoseDeepLabHead(nn.Module):
 # Copied from
 # https://github.com/pytorch/vision/blob/master/torchvision/models/segmentation/deeplabv3.py
 # See https://arxiv.org/pdf/1706.05587.pdf for details
-class ASPPConv(nn.Sequential):
+class ASPPConv(nn.Sequential):  # pyre-ignore[11]
     def __init__(self, in_channels, out_channels, dilation):
         modules = [
             nn.Conv2d(

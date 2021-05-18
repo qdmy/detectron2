@@ -5,14 +5,14 @@
 This file documents a large collection of baselines trained
 with detectron2 in Sep-Oct, 2019.
 All numbers were obtained on [Big Basin](https://engineering.fb.com/data-center-engineering/introducing-big-basin-our-next-generation-ai-hardware/)
-servers with 8 NVIDIA V100 GPUs & NVLink. The software in use were PyTorch 1.3, CUDA 9.2, cuDNN 7.4.2 or 7.6.3.
+servers with 8 NVIDIA V100 GPUs & NVLink. The speed numbers are periodically updated with latest PyTorch/CUDA/cuDNN versions.
 You can access these models from code using [detectron2.model_zoo](https://detectron2.readthedocs.io/modules/model_zoo.html) APIs.
 
 In addition to these official baseline models, you can find more models in [projects/](projects/).
 
 #### How to Read the Tables
-* The "Name" column contains a link to the config file. Running `tools/train_net.py` with this config file
-  and 8 GPUs will reproduce the model.
+* The "Name" column contains a link to the config file. Running `tools/train_net.py --num-gpus 8` with this config file
+  will reproduce the model.
 * Training speed is averaged across the entire training.
   We keep updating the speed with latest version of detectron2/pytorch/etc.,
   so they might be different from the `metrics` file.
@@ -65,6 +65,8 @@ Pretrained models in Detectron's format can still be used. For example:
   ResNet-50 with Group Normalization.
 * [R-101-GN.pkl](https://dl.fbaipublicfiles.com/detectron/ImageNetPretrained/47592356/R-101-GN.pkl):
   ResNet-101 with Group Normalization.
+
+These models require slightly different settings regarding normalization and architecture. See the model zoo configs for reference.
 
 #### License
 
@@ -219,7 +221,7 @@ All models available for download through this document are licensed under the
  <tr><td align="left"><a href="configs/COCO-Detection/retinanet_R_50_FPN_1x.yaml">R50</a></td>
 <td align="center">1x</td>
 <td align="center">0.205</td>
-<td align="center">0.056</td>
+<td align="center">0.041</td>
 <td align="center">4.1</td>
 <td align="center">37.4</td>
 <td align="center">190397773</td>
@@ -229,7 +231,7 @@ All models available for download through this document are licensed under the
  <tr><td align="left"><a href="configs/COCO-Detection/retinanet_R_50_FPN_3x.yaml">R50</a></td>
 <td align="center">3x</td>
 <td align="center">0.205</td>
-<td align="center">0.056</td>
+<td align="center">0.041</td>
 <td align="center">4.1</td>
 <td align="center">38.7</td>
 <td align="center">190397829</td>
@@ -239,7 +241,7 @@ All models available for download through this document are licensed under the
  <tr><td align="left"><a href="configs/COCO-Detection/retinanet_R_101_FPN_3x.yaml">R101</a></td>
 <td align="center">3x</td>
 <td align="center">0.291</td>
-<td align="center">0.069</td>
+<td align="center">0.054</td>
 <td align="center">5.2</td>
 <td align="center">40.4</td>
 <td align="center">190397697</td>

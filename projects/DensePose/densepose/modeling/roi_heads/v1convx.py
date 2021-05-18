@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 
 import torch
 from torch import nn
@@ -36,6 +36,7 @@ class DensePoseV1ConvXHead(nn.Module):
         for i in range(self.n_stacked_convs):
             layer = Conv2d(n_channels, hidden_dim, kernel_size, stride=1, padding=pad_size)
             layer_name = self._get_layer_name(i)
+            # pyre-fixme[29]: `Union[nn.Module, torch.Tensor]` is not a function.
             self.add_module(layer_name, layer)
             n_channels = hidden_dim
         self.n_out_channels = n_channels

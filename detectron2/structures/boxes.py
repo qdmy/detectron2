@@ -1,12 +1,22 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 import math
 import numpy as np
 from enum import IntEnum, unique
-from typing import Any, List, Tuple, Union
+from typing import List, Tuple, Union
 import torch
 from torch import device
 
+from detectron2.utils.env import TORCH_VERSION
+
 _RawBoxType = Union[List[float], Tuple[float, ...], torch.Tensor, np.ndarray]
+
+
+if TORCH_VERSION < (1, 8):
+    _maybe_jit_unused = torch.jit.unused
+else:
+
+    def _maybe_jit_unused(x):
+        return x
 
 
 @unique
@@ -69,10 +79,7 @@ class BoxMode(IntEnum):
             else:
                 arr = box.clone()
 
-        assert to_mode.value not in [
-            BoxMode.XYXY_REL,
-            BoxMode.XYWH_REL,
-        ] and from_mode.value not in [
+        assert to_mode not in [BoxMode.XYXY_REL, BoxMode.XYWH_REL] and from_mode not in [
             BoxMode.XYXY_REL,
             BoxMode.XYWH_REL,
         ], "Relative mode not yet supported!"
@@ -152,7 +159,7 @@ class Boxes:
         if tensor.numel() == 0:
             # Use reshape, so we don't end up creating a new tensor that does not depend on
             # the inputs (and consequently confuses jit)
-            tensor = tensor.reshape((0, 4)).to(dtype=torch.float32, device=device)
+            tensor = tensor.reshape((-1, 4)).to(dtype=torch.float32, device=device)
         assert tensor.dim() == 2 and tensor.size(-1) == 4, tensor.size()
 
         self.tensor = tensor
@@ -166,9 +173,10 @@ class Boxes:
         """
         return Boxes(self.tensor.clone())
 
-    @torch.jit.unused
-    def to(self, *args: Any, **kwargs: Any):
-        return Boxes(self.tensor.to(*args, **kwargs))
+    @_maybe_jit_unused
+    def to(self, device: torch.device):
+        # Boxes are assumed float32 and does not support to(dtype)
+        return Boxes(self.tensor.to(device=device))
 
     def area(self) -> torch.Tensor:
         """
@@ -191,10 +199,11 @@ class Boxes:
         """
         assert torch.isfinite(self.tensor).all(), "Box tensor contains infinite or NaN!"
         h, w = box_size
-        self.tensor[:, 0].clamp_(min=0, max=w)
-        self.tensor[:, 1].clamp_(min=0, max=h)
-        self.tensor[:, 2].clamp_(min=0, max=w)
-        self.tensor[:, 3].clamp_(min=0, max=h)
+        x1 = self.tensor[:, 0].clamp(min=0, max=w)
+        y1 = self.tensor[:, 1].clamp(min=0, max=h)
+        x2 = self.tensor[:, 2].clamp(min=0, max=w)
+        y2 = self.tensor[:, 3].clamp(min=0, max=h)
+        self.tensor = torch.stack((x1, y1, x2, y2), dim=-1)
 
     def nonempty(self, threshold: float = 0.0) -> torch.Tensor:
         """
@@ -212,7 +221,7 @@ class Boxes:
         keep = (widths > threshold) & (heights > threshold)
         return keep
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> "Boxes":
         """
         Args:
             item: int, slice, or a BoolTensor
@@ -275,10 +284,9 @@ class Boxes:
         self.tensor[:, 0::2] *= scale_x
         self.tensor[:, 1::2] *= scale_y
 
-    # classmethod not supported by torchscript. TODO try staticmethod
     @classmethod
-    @torch.jit.unused
-    def cat(cls, boxes_list):
+    @_maybe_jit_unused
+    def cat(cls, boxes_list: List["Boxes"]) -> "Boxes":
         """
         Concatenates a list of Boxes into a single Boxes
 
@@ -337,10 +345,10 @@ def pairwise_intersection(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
 # with slight modifications
 def pairwise_iou(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
     """
-    Given two lists of boxes of size N and M,
-    compute the IoU (intersection over union)
-    between __all__ N x M pairs of boxes.
+    Given two lists of boxes of size N and M, compute the IoU
+    (intersection over union) between **all** N x M pairs of boxes.
     The box order must be (xmin, ymin, xmax, ymax).
+
     Args:
         boxes1,boxes2 (Boxes): two `Boxes`. Contains N & M boxes, respectively.
 
@@ -362,7 +370,7 @@ def pairwise_iou(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
 
 def pairwise_ioa(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
     """
-    Similar to pariwise_iou but compute the IoA (intersection over boxes2 area).
+    Similar to :func:`pariwise_iou` but compute the IoA (intersection over boxes2 area).
 
     Args:
         boxes1,boxes2 (Boxes): two `Boxes`. Contains N & M boxes, respectively.

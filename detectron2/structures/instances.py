@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 import itertools
 from typing import Any, Dict, List, Tuple, Union
 import torch
@@ -141,7 +141,8 @@ class Instances:
 
     def __len__(self) -> int:
         for v in self._fields.values():
-            return len(v)
+            # use __len__ because len() has to be int and is not friendly to tracing
+            return v.__len__()
         raise NotImplementedError("Empty Instances does not support __len__!")
 
     def __iter__(self):

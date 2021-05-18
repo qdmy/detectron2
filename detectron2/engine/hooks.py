@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 
 import datetime
 import itertools
@@ -10,13 +10,15 @@ import time
 from collections import Counter
 import torch
 from fvcore.common.checkpoint import PeriodicCheckpointer as _PeriodicCheckpointer
-from fvcore.common.file_io import PathManager
+from fvcore.common.param_scheduler import ParamScheduler
 from fvcore.common.timer import Timer
 from fvcore.nn.precise_bn import get_bn_modules, update_bn_stats
 
 import detectron2.utils.comm as comm
 from detectron2.evaluation.testing import flatten_results_dict
+from detectron2.solver import LRMultiplier
 from detectron2.utils.events import EventStorage, EventWriter
+from detectron2.utils.file_io import PathManager
 
 from .train_loop import HookBase
 
@@ -131,7 +133,8 @@ class IterationTimer(HookBase):
         self._total_timer.resume()
 
     def after_step(self):
-        # +1 because we're in after_step
+        # +1 because we're in after_step, the current step is done
+        # but not yet counted
         iter_done = self.trainer.iter - self.trainer.start_iter + 1
         if iter_done >= self._warmup_iter:
             sec = self._step_timer.seconds()
@@ -171,6 +174,9 @@ class PeriodicWriter(HookBase):
 
     def after_train(self):
         for writer in self._writers:
+            # If any new data is found (e.g. produced by other after_train),
+            # write them before closing
+            writer.write()
             writer.close()
 
 
@@ -199,30 +205,44 @@ class LRScheduler(HookBase):
     It is executed after every iteration.
     """
 
-    def __init__(self, optimizer, scheduler):
+    def __init__(self, optimizer=None, scheduler=None):
         """
         Args:
             optimizer (torch.optim.Optimizer):
-            scheduler (torch.optim._LRScheduler)
+            scheduler (torch.optim.LRScheduler or fvcore.common.param_scheduler.ParamScheduler):
+                if a :class:`ParamScheduler` object, it defines the multiplier over the base LR
+                in the optimizer.
+
+        If any argument is not given, will try to obtain it from the trainer.
         """
         self._optimizer = optimizer
         self._scheduler = scheduler
 
+    def before_train(self):
+        self._optimizer = self._optimizer or self.trainer.optimizer
+        if isinstance(self.scheduler, ParamScheduler):
+            self._scheduler = LRMultiplier(
+                self._optimizer,
+                self.scheduler,
+                self.trainer.max_iter,
+                last_iter=self.trainer.iter - 1,
+            )
+
         # NOTE: some heuristics on what LR to summarize
         # summarize the param group with most parameters
-        largest_group = max(len(g["params"]) for g in optimizer.param_groups)
+        largest_group = max(len(g["params"]) for g in self._optimizer.param_groups)
 
         if largest_group == 1:
             # If all groups have one parameter,
             # then find the most common initial LR, and use it for summary
-            lr_count = Counter([g["lr"] for g in optimizer.param_groups])
+            lr_count = Counter([g["lr"] for g in self._optimizer.param_groups])
             lr = lr_count.most_common()[0][0]
-            for i, g in enumerate(optimizer.param_groups):
+            for i, g in enumerate(self._optimizer.param_groups):
                 if g["lr"] == lr:
                     self._best_param_group_id = i
                     break
         else:
-            for i, g in enumerate(optimizer.param_groups):
+            for i, g in enumerate(self._optimizer.param_groups):
                 if len(g["params"]) == largest_group:
                     self._best_param_group_id = i
                     break
@@ -230,7 +250,22 @@ class LRScheduler(HookBase):
     def after_step(self):
         lr = self._optimizer.param_groups[self._best_param_group_id]["lr"]
         self.trainer.storage.put_scalar("lr", lr, smoothing_hint=False)
-        self._scheduler.step()
+        self.scheduler.step()
+
+    @property
+    def scheduler(self):
+        return self._scheduler or self.trainer.scheduler
+
+    def state_dict(self):
+        if isinstance(self.scheduler, torch.optim.lr_scheduler._LRScheduler):
+            return self.scheduler.state_dict()
+        return {}
+
+    def load_state_dict(self, state_dict):
+        if isinstance(self.scheduler, torch.optim.lr_scheduler._LRScheduler):
+            logger = logging.getLogger(__name__)
+            logger.info("Loading scheduler from state_dict ...")
+            self.scheduler.load_state_dict(state_dict)
 
 
 class AutogradProfiler(HookBase):
@@ -307,7 +342,8 @@ class EvalHook(HookBase):
     def __init__(self, eval_period, eval_function):
         """
         Args:
-            eval_period (int): the period to run `eval_function`.
+            eval_period (int): the period to run `eval_function`. Set to 0 to
+                not evaluate periodically (but still after the last iteration).
             eval_function (callable): a function which takes no arguments, and
                 returns a nested dict of evaluation metrics.
 
@@ -345,7 +381,9 @@ class EvalHook(HookBase):
     def after_step(self):
         next_iter = self.trainer.iter + 1
         if self._period > 0 and next_iter % self._period == 0:
-            self._do_eval()
+            # do the last eval in after_train
+            if next_iter != self.trainer.max_iter:
+                self._do_eval()
 
     def after_train(self):
         # This condition is to prevent the eval from running after a failed training
@@ -426,81 +464,3 @@ class PreciseBN(HookBase):
                 + "Note that this could produce different statistics every time."
             )
             update_bn_stats(self._model, data_loader(), self._num_iter)
-
-
-__all__ += [
-    "LookupResourceUtilization",
-    "QuantizationPolicy",
-    ]
-
-enable_LookupResourceUtilization = True
-try:
-    from gpuinfo import GPUInfo
-except:
-    enable_LookupResourceUtilization = False
-
-class LookupResourceUtilization(HookBase):
-    """
-    """
-
-    def __init__(self, trigger=[1, 2, 5, 20, 200]):
-        """
-        Args:
-            trigger (list of int): the number of iterations to trigger the lookup
-        """
-        if enable_LookupResourceUtilization:
-            self._trigger = trigger
-            self._logger = logging.getLogger(__name__)
-        else:
-            self._trigger = None
-
-    def after_step(self):
-        if isinstance(self._trigger, list) and self.trainer.iter in self._trigger:
-            self._logger.info(self.gpu_info())
-
-    def gpu_info(self):
-        try:
-            percent, memory = GPUInfo.gpu_usage()
-        except ValueError:
-            return "Error when read GPU utilization"
-        return "precent: %r, memory: %r" % (percent, memory)
-
-enable_QuantizationPolicy = True
-try:
-    from third_party.quantization.policy import deploy_on_init, read_policy, deploy_on_iteration
-except:
-    enable_QuantizationPolicy = False
-
-class QuantizationPolicy(HookBase):
-    """
-    """
-
-    def __init__(self, policy_file=""):
-        """
-        Args:
-            policy_file (str): filename of the policy
-        """
-        if enable_QuantizationPolicy:
-            self._policy_file = policy_file
-            self._iteration_policies = None
-            self._logger = logging.getLogger(__name__)
-        else:
-            self._policy_file = None
-
-    def before_train(self):
-        if self._policy_file in [None, '']:
-            return
-
-        #self._logger.info("Employing policy on init".format(self._policy_file))
-        #deploy_on_init(self.trainer.model, self._policy_file, verbose=self._logger.info)
-        self._logger.info("Reading dynamic policy of 'iteration' section from {}".format(self._policy_file))
-        self._iteration_policies = read_policy(self._policy_file, section='iteration', verbose=self._logger.info)
-        self._logger.info("iteration_policies: {}".format(self._iteration_policies))
-
-    def before_step(self):
-        if self._policy_file in [None, ""] or self._iteration_policies in [None, []]:
-            return
-
-        deploy_on_iteration(self.trainer.model, self._iteration_policies, self.trainer.iter,
-                optimizer=self.trainer.optimizer, verbose=self._logging.info)
-

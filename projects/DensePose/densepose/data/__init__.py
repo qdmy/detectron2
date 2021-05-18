@@ -1,5 +1,6 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 
+from .meshes import builtin
 from .build import (
     build_detection_test_loader,
     build_detection_train_loader,
@@ -12,6 +13,7 @@ from .build import (
 from .combined_loader import CombinedDataLoader
 from .dataset_mapper import DatasetMapper
 from .inference_based_loader import InferenceBasedLoader, ScoreBasedFilter
+from .image_list_dataset import ImageListDataset
 from .utils import is_relative_local_path, maybe_prepend_base_path
 
 # ensure the builtin datasets are registered

@@ -1,10 +1,12 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+from typing import Optional
+from torch import nn
 
 from detectron2.config import CfgNode
 
+from .cse.embedder import Embedder
 from .filter import DensePoseDataFilter
-from .losses import DensePoseLosses
-from .predictors import DensePoseChartWithConfidencePredictor
 
 
 def build_densepose_predictor(cfg: CfgNode, input_channels: int):
@@ -17,8 +19,10 @@ def build_densepose_predictor(cfg: CfgNode, input_channels: int):
     Return:
         An instance of DensePose predictor
     """
-    predictor = DensePoseChartWithConfidencePredictor(cfg, input_channels)
-    return predictor
+    from .predictors import DENSEPOSE_PREDICTOR_REGISTRY
+
+    predictor_name = cfg.MODEL.ROI_DENSEPOSE_HEAD.PREDICTOR_NAME
+    return DENSEPOSE_PREDICTOR_REGISTRY.get(predictor_name)(cfg, input_channels)
 
 
 def build_densepose_data_filter(cfg: CfgNode):
@@ -62,5 +66,22 @@ def build_densepose_losses(cfg: CfgNode):
     Return:
         An instance of DensePose loss
     """
-    losses = DensePoseLosses(cfg)
-    return losses
+    from .losses import DENSEPOSE_LOSS_REGISTRY
+
+    loss_name = cfg.MODEL.ROI_DENSEPOSE_HEAD.LOSS_NAME
+    return DENSEPOSE_LOSS_REGISTRY.get(loss_name)(cfg)
+
+
+def build_densepose_embedder(cfg: CfgNode) -> Optional[nn.Module]:
+    """
+    Build embedder used to embed mesh vertices into an embedding space.
+    Embedder contains sub-embedders, one for each mesh ID.
+
+    Args:
+        cfg (cfgNode): configuration options
+    Return:
+        Embedding module
+    """
+    if cfg.MODEL.ROI_DENSEPOSE_HEAD.CSE.EMBEDDERS:
+        return Embedder(cfg)
+    return None
