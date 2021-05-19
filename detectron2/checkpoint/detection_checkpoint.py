@@ -95,7 +95,10 @@ class DetectionCheckpointer(Checkpointer):
 
         loaded = super()._load_file(filename)  # load native pth checkpoint
         if "model" not in loaded:
-            loaded = {"model": loaded}
+            if 'state_dict' in loaded:
+                loaded = {"model": loaded['state_dict']}
+            else:
+                loaded = {"model": loaded}
         return loaded
 
     def _load_model(self, checkpoint):

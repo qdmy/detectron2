@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import torch
+import logging
 
 from detectron2.utils.logger import _log_api_usage
 from detectron2.utils.registry import Registry
@@ -25,14 +26,14 @@ def build_model(cfg):
     try:
         from third_party.convert_to_quantization import convert2quantization
         from third_party.quantization.policy import deploy_on_init
-    except:
+    except (ImportError, RuntimeError, FileNotFoundError, PermissionError) as e:
         import_quant = False
+        logger.info("import quantization module failed. {}".format(e))
+
     if import_quant:
         convert2quantization(model, cfg, verbose=logger.info)
         pf = getattr(getattr(cfg.MODEL, 'QUANTIZATION', dict()), 'policy', None)
         deploy_on_init(model, pf, verbose=logger.info)
-    else:
-        logger.info("import quantization module failed")
 
     model.to(torch.device(cfg.MODEL.DEVICE))
     _log_api_usage("modeling.meta_arch." + meta_arch)

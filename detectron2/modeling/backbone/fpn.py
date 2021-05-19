@@ -23,7 +23,7 @@ class FPN(Backbone):
     _fuse_type: torch.jit.Final[str]
 
     def __init__(
-        self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum"
+        self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum", activation=False
     ):
         """
         Args:
@@ -144,10 +144,14 @@ class FPN(Backbone):
                 features = bottom_up_features[features]
                 top_down_features = F.interpolate(prev_features, scale_factor=2.0, mode="nearest")
                 lateral_features = lateral_conv(features)
-                prev_features = lateral_features + top_down_features
+                prev_features = self.add(lateral_features, top_down_features)
                 if self._fuse_type == "avg":
                     prev_features /= 2
-                results.insert(0, output_conv(prev_features))
+                if self.use_relu:
+                    prev_features = F.relu_(prev_features)
+                    results.insert(0, F.relu_(output_conv(prev_features)))
+                else:
+                    results.insert(0, output_conv(prev_features))
 
         if self.top_block is not None:
             if self.top_block.in_feature in bottom_up_features:

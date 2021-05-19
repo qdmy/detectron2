@@ -464,3 +464,32 @@ class PreciseBN(HookBase):
                 + "Note that this could produce different statistics every time."
             )
             update_bn_stats(self._model, data_loader(), self._num_iter)
+
+
+__all__ += [
+    "LookupResourceUtilization",
+    ]
+
+from gpuinfo import GPUInfo
+
+class LookupResourceUtilization(HookBase):
+    """
+    """
+    def __init__(self, trigger=[1, 2, 5, 20, 200]):
+        """
+        Args:
+            trigger (list of int): the number of iterations to trigger the lookup
+        """
+        self._trigger = trigger
+        self._logger = logging.getLogger(__name__)
+
+    def after_step(self):
+        if isinstance(self._trigger, list) and self.trainer.iter in self._trigger:
+            self._logger.info(self.gpu_info())
+
+    def gpu_info(self):
+        try:
+            percent, memory = GPUInfo.gpu_usage()
+        except ValueError:
+            return "Error when read GPU utilization"
+        return "precent: %r, memory: %r" % (percent, memory)

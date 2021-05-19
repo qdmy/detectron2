@@ -458,10 +458,6 @@ class DefaultTrainer(TrainerBase):
         # we can use the saved checkpoint to debug.
         ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results))
 
-        # trigger dynamic quantization policy
-        pf = getattr(getattr(cfg.MODEL, 'QUANTIZATION', dict()), 'policy', None)
-        ret.append(hooks.QuantizationPolicy(pf))
-
         if comm.is_main_process():
             # Here the default print/log frequency of each writer is used.
             # run writers in the end, so that evaluation metrics are written

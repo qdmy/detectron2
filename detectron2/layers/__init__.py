@@ -19,4 +19,6 @@ from .wrappers import (
 from .blocks import CNNBlockBase, DepthwiseSeparableConv2d
 from .aspp import ASPP
 
+from third_party.layers import EltWiseModule
+
 __all__ = [k for k in globals().keys() if not k.startswith("_")]

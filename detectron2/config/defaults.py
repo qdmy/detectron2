@@ -638,6 +638,9 @@ _C.MODEL.FPN.USE_RELU = False
 # RPN
 _C.MODEL.RPN.HEAD_NORM = ""
 
+# log
+_C.SOLVER.PRINT_PERIOD = 20
+
 # quantization options
 _C.MODEL.QUANTIZATION = CN()
 _C.MODEL.QUANTIZATION.global_buffer = CN() # global_buffer

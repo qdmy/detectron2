@@ -149,6 +149,9 @@ def get_norm(norm, out_channels):
             activation = pack[1]
         else:
             activation = 'NONE'
+        if norm == 'SyncBN' and torch.cuda.device_count() < 2:
+            norm = 'BN'
+
         norms = {
             "BN": BatchNorm2d,
             # Fixed in https://github.com/pytorch/pytorch/pull/36382
