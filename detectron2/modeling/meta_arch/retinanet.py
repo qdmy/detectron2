@@ -26,6 +26,18 @@ __all__ = ["RetinaNet"]
 
 logger = logging.getLogger(__name__)
 
+class ModuleListDial(nn.ModuleList):
+    def __init__(self, modules=None):
+        super(ModuleListDial, self).__init__(modules)
+        self.cur_position = 0
+
+    def forward(self, x):
+        result = self[self.cur_position](x)
+        self.cur_position += 1
+        if self.cur_position >= len(self):
+            self.cur_position = 0
+        return result
+
 
 def permute_to_N_HWA_K(tensor, K: int):
     """
@@ -527,6 +539,7 @@ class RetinaNetHead(nn.Module):
         """
         super().__init__()
 
+        self.num_levels  = len(input_shape)
         if norm == "BN" or norm == "SyncBN":
             logger.warning("Shared norm does not work well for BN, SyncBN, expect poor results")
 
