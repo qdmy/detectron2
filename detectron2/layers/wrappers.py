@@ -113,7 +113,8 @@ class Conv2d(torch.nn.Conv2d, tp.layers.Quant):
 
 
 ConvTranspose2d = torch.nn.ConvTranspose2d
-BatchNorm2d = torch.nn.BatchNorm2d
+#BatchNorm2d = torch.nn.BatchNorm2d
+BatchNorm2d = tp.layers.BatchNorm2d
 interpolate = F.interpolate
 Linear = torch.nn.Linear
 

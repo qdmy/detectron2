@@ -4,8 +4,6 @@ import torch.nn.functional as F
 import logging
 import numpy as np
 
-#from third_party..dorefa import RoundSTE
-
 class Quant(object):
     def __init__(self):
         if isinstance(self, torch.nn.Conv2d):
@@ -186,5 +184,190 @@ class EltWiseModule(torch.nn.Module):
         if self.enable:
             base = base + "-index({})".format(self.index)
         return base
+
+class BatchNorm2d(torch.nn.BatchNorm2d):
+    """
+    A wrapper around :class:`torch.nn.BatchNorm2d` to support zero-size tensor.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # quantization related attributes
+        self.enable = False
+        self.args = None
+        self.logger = logging.getLogger(__name__ + '.Quantization')
+        self.verbose = self.logger.info
+        self.index = -1
+        self.input_scale = 1.0
+        self.tag = 'norm'
+        self.input_index = ""
+        def identify(x):
+            return x
+        from third_party.quantization.dorefa import RoundSTE
+        self.quant_functions = { "RoundSTE": RoundSTE.apply, "identify": identify }
+        self.choice = 'identify'
+
+    def convert_norm_to_quantization_version(self, args=None, index=-1):
+        self.args = args
+        self.update_norm_quantization_parameter(index=index)
+        if args is not None:
+            assert hasattr(args, 'global_buffer'), "no global_buffer found in quantization args"
+
+    def update_norm_quantization_parameter(self, **parameters):
+        index = self.index
+        if 'index' in parameters:
+            index =  parameters['index']
+        if index != self.index:
+            self.index = index
+            self.verbose('update %s_index %r' % (self.tag, self.index))
+
+        if 'by_index' in parameters:
+            by_index = parameters['by_index']
+            if isinstance(by_index, list) or (isinstance(by_index, str) and by_index != "all"):
+                try:
+                    if not isinstance(by_index, list):
+                        by_index = by_index.split()
+                    by_index = [int(i) for i in by_index]
+                except (ValueError, SyntaxError) as e:
+                    self.verbose('unexpect string in by_index: {}'.format(by_index))
+
+            if by_index == 'all' or self.index in by_index:
+                if ('by_tag' in parameters and self.tag in parameters['by_tag']) or ('by_tag' not in parameters):
+                        for k, v in list(parameters.items()):
+                            if hasattr(self, "{}".format(k)):
+                                if isinstance(v, str):
+                                    v = v.replace("'", "").replace('"', '')
+                                if isinstance(getattr(self, k), bool):
+                                    v = False if v in ['False', 'false', False] else True
+                                elif isinstance(getattr(self, k), int):
+                                    v = int(v)
+                                elif isinstance(getattr(self, k), float):
+                                    v = float(v)
+                                elif isinstance(getattr(self, k), str):
+                                    if k == 'input_index' and 'same' in v:
+                                        v = v.replace('same', str(self.index))
+                                if not isinstance(getattr(self, k), torch.Tensor):
+                                    setattr(self, "{}".format(k), v)
+                                    self.verbose('update {}_{} to {} for index {}'.format(self.tag, k, getattr(self, k, 'Non-Exist'), self.index))
+                                    if k == 'input_index':
+                                        for tag in ['fm', 'wt']:
+                                            exist = 'Yes' if self.input_index + "-{}".format(tag) in self.args.global_buffer else 'No'
+                                            self.verbose("input_index of tag({}) exist in global buffer ? {}".format(tag, exist))
+        if self.enable:
+            assert self.args is not None, "args should not be None"
+            assert hasattr(self.args, 'global_buffer'), "no global_buffer found in quantization args"
+            assert self.choice in self.quant_functions, "unknown choice of quant_function {}".format(self.choice)
+
+    def forward(self, x):
+        if x.numel() > 0:
+            if self.enable:
+                scale = self.weight * (self.running_var + self.eps).rsqrt()
+                bias = self.bias / scale - self.running_mean
+                input_scale = self.input_scale
+                if self.input_index + "-fm" in self.args.global_buffer:
+                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-fm"].abs().item()
+                if self.input_index + "-wt" in self.args.global_buffer:
+                    input_scale = input_scale * self.args.global_buffer[self.input_index + "-wt"].abs().item()
+                if self.input_index + "-norm" not in self.args.global_buffer:
+                    self.verbose("add {} to global_buffer".format(self.input_index + "-norm"))
+                self.args.global_buffer[self.input_index + "-norm"] = input_scale * scale.cpu().detach().numpy()
+                bias = self.quant_functions[self.choice](bias / input_scale) * input_scale
+                scale = scale.reshape(1, -1, 1, 1)
+                bias = bias.reshape(1, -1, 1, 1)
+                return (x + bias) * scale
+            else:
+                return super(BatchNorm2d, self).forward(x)
+        # get output shape
+        output_shape = x.shape
+        return _NewEmptyTensorOp.apply(x, output_shape)
+
+    def __repr__(self):
+        base = super(BatchNorm2d, self).__repr__()
+        if self.enable:
+            base = base + "-choice({})-index({})-input({})".format(self.choice, self.index, self.input_index)
+        return base
+
+class Linear(torch.nn.Linear):
+    """
+    A wrapper around :class:`torch.nn.Linear` to support empty inputs and more features.
+    Because of https://github.com/pytorch/pytorch/issues/34202
+    """
+
+    def __init__(self, *args, **kwargs):
+        norm = kwargs.pop("norm", None)
+        activation = kwargs.pop("activation", None)
+        super().__init__(*args, **kwargs)
+
+        self.norm = norm
+        self.activation = activation
+
+        # add for quantization support
+        self.quantization = None
+        self.quant_activation = None
+        self.quant_weight = None
+        self.force_fp = True
+
+    def convert_to_quantization_version(self, quantization=None, index=-1):
+        args = quantization
+        logger = logging.getLogger(__name__ + '.Quantization')
+        if import_quantization and args is not None and hasattr(args, 'keyword'):
+            self.quantization = quantization
+            self.force_fp = False
+            self.quant_activation = Quantization(self.quantization, 'fm', [1, self.in_features, 1, 1], logger=logger)
+            self.quant_weight = Quantization(self.quantization, 'wt', [1, 1, self.in_features, self.out_features], logger=logger)
+            self.quant_activation.update_quantization(index=index)
+            self.quant_weight.update_quantization(index=index)
+            device = self.weight.device
+            self.quant_activation.to(device)
+            self.quant_weight.to(device)
+
+    def update_quantization_parameter(self, **parameters):
+        if not self.force_fp:
+            feedback = dict()
+            def merge_dict(feedback, fd):
+                if fd is not None:
+                    for k in fd:
+                        if k in feedback:
+                            if isinstance(fd[k], list) and isinstance(feedback[k], list):
+                                feedback[k] = feedback[k] + fd[k]
+                        else:
+                            feedback[k] = fd[k]
+            fd = self.quant_activation.update_quantization(**parameters)
+            merge_dict(feedback, fd)
+            fd = self.quant_weight.update_quantization(**parameters)
+            merge_dict(feedback, fd)
+            return feedback
+        else:
+            return None
+
+    def forward(self, x):
+        if x.numel() == 0:
+            output_shape = [x.shape[0], self.weight.shape[0]]
+
+            empty = _NewEmptyTensorOp.apply(x, output_shape)
+            if self.training:
+                # This is to make DDP happy.
+                # DDP expects all workers to have gradient w.r.t the same set of parameters.
+                _dummy = sum(x.view(-1)[0] for x in self.parameters()) * 0.0
+                return empty + _dummy
+            else:
+                return empty
+
+        if self.quantization is not None and not self.force_fp:
+            shape = self.weight.shape 
+            weight = self.quant_weight(self.weight)
+            weight = weight.reshape(shape)
+            inputs = self.quant_activation(x)
+
+            x = F.linear(inputs, weight, self.bias)
+        else:
+            x = super().forward(x)
+
+        if self.norm is not None:
+            x = self.norm(x)
+        if self.activation is not None:
+            x = self.activation(x)
+        return x
 
 
