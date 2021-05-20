@@ -48,3 +48,6 @@ wheels/
 /projects/*/datasets
 /models
 pretrained
+
+# links
+third_party/quantization
