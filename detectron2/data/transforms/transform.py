@@ -114,7 +114,7 @@ class ResizeTransform(Transform):
         assert len(img.shape) <= 4
         interp_method = interp if interp is not None else self.interp
 
-        if img.dtype == np.uint8 and img.shape[2] in [1, 3]:
+        if img.dtype == np.uint8:
             if len(img.shape) > 2 and img.shape[2] == 1:
                 pil_image = Image.fromarray(img[:, :, 0], mode="L")
             else:
