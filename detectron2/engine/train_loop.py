@@ -275,6 +275,8 @@ class SimpleTrainer(TrainerBase):
             losses = loss_dict
             loss_dict = {"total_loss": loss_dict}
         else:
+            if len(loss_dict) == 0:
+                return
             losses = sum(loss_dict.values())
 
         """

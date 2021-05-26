@@ -23,7 +23,8 @@ class FPN(Backbone):
     _fuse_type: torch.jit.Final[str]
 
     def __init__(
-        self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum", activation=False
+        self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum",
+             activation=False, include_in_features=False,
     ):
         """
         Args:
@@ -51,6 +52,8 @@ class FPN(Backbone):
         super(FPN, self).__init__()
         assert isinstance(bottom_up, Backbone)
         assert in_features, in_features
+
+        self.include_in_features = include_in_features
 
         # Feature map strides and channels from the bottom up network (e.g. ResNet)
         input_shapes = bottom_up.output_shape()
@@ -108,6 +111,7 @@ class FPN(Backbone):
         assert fuse_type in {"avg", "sum"}
         self._fuse_type = fuse_type
         self.use_relu = activation
+        self.input_shapes = input_shapes
 
         self.add = EltWiseModule()
 
@@ -160,15 +164,22 @@ class FPN(Backbone):
                 top_block_in_feature = results[self._out_features.index(self.top_block.in_feature)]
             results.extend(self.top_block(top_block_in_feature))
         assert len(self._out_features) == len(results)
-        return {f: res for f, res in zip(self._out_features, results)}
+
+        results = {f: res for f, res in zip(self._out_features, results)}
+        if self.include_in_features:
+            results.update(bottom_up_features)
+        return results
 
     def output_shape(self):
-        return {
+        current_shape = {
             name: ShapeSpec(
                 channels=self._out_feature_channels[name], stride=self._out_feature_strides[name]
             )
-            for name in self._out_features
-        }
+            for name in self._out_features }
+
+        if self.include_in_features:
+            current_shape.update(self.input_shapes)
+        return current_shape
 
 
 def _assert_strides_are_log2_contiguous(strides):
