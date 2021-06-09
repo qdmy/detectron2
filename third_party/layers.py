@@ -51,8 +51,6 @@ class Quant(object):
             merge_dict(feedback, fd)
             fd = self.quant_weight.update_quantization(**parameters)
             merge_dict(feedback, fd)
-            #fd = self.quant_output.update_quantization(**parameters)
-            #merge_dict(feedback, fd)
             return feedback
         else:
             return None
