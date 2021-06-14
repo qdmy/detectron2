@@ -4,6 +4,17 @@ import torch.nn.functional as F
 import logging
 import numpy as np
 
+class _NewEmptyTensorOp(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, new_shape):
+        ctx.shape = x.shape
+        return x.new_empty(new_shape)
+
+    @staticmethod
+    def backward(ctx, grad):
+        shape = ctx.shape
+        return _NewEmptyTensorOp.apply(grad, shape), None
+
 class Quant(object):
     def __init__(self):
         if isinstance(self, torch.nn.Conv2d):
@@ -25,7 +36,8 @@ class Quant(object):
                         logger.info("warning keyword {} not support".format(i))
             self.pads = tuple(x for x in self.padding for _ in range(2))
             self.quant_activation = Quantization(args=self.quantization, tag='fm', shape=[1, self.in_channels, 1, 1], logger=logger)
-            self.quant_weight = Quantization(args=self.quantization, tag='wt', shape=[self.out_channels, self.in_channels, *self.kernel_size], logger=logger)
+            self.quant_weight = Quantization(args=self.quantization, tag='wt', \
+                    shape=[self.out_channels, self.in_channels, *self.kernel_size], logger=logger)
             self.padding_after_quant = getattr(self.quantization, 'padding_after_quant', False)
             self.quant_activation.update_quantization(index=index)
             self.quant_weight.update_quantization(index=index)
@@ -247,7 +259,8 @@ class BatchNorm2d(torch.nn.BatchNorm2d):
                                         v = v.replace('same', str(self.index))
                                 if not isinstance(getattr(self, k), torch.Tensor):
                                     setattr(self, "{}".format(k), v)
-                                    self.verbose('update {}_{} to {} for index {}'.format(self.tag, k, getattr(self, k, 'Non-Exist'), self.index))
+                                    self.verbose('update {}_{} to {} for index {}'.format(
+                                        self.tag, k, getattr(self, k, 'Non-Exist'), self.index))
                                     if k == 'input_index':
                                         for tag in ['fm', 'wt']:
                                             exist = 'Yes' if self.input_index + "-{}".format(tag) in self.args.global_buffer else 'No'
