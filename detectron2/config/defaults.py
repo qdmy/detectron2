@@ -632,6 +632,9 @@ _C.GLOBAL.HACK = 1.0
 _C.MODEL.fp16 = False
 _C.MODEL.apex_sync_bn = False
 
+# double initilization
+_C.MODEL.EXTRA_WEIGHTS = ""
+
 # RELU in FPN
 _C.MODEL.FPN.USE_RELU = False
 

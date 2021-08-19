@@ -124,3 +124,14 @@ class DetectionCheckpointer(Checkpointer):
                 except ValueError:
                     pass
         return incompatible
+
+    def load_weight_only(self, filename):
+        if not os.path.isfile(filename):
+            filename = PathManager.get_local_path(filename)
+        if not os.path.isfile(filename):
+            return None
+
+        self.logger.info("Loading model from {}".format(filename))
+        checkpoint = self._load_file(filename)  # load native pth checkpoint
+        self._load_model(checkpoint)
+        return checkpoint
