@@ -2,7 +2,7 @@ _BASE_: "../Base-RetinaNet.yaml"
 MODEL:
   IS_OFA: True
   OFA_MOBILENETV3:
-    KD_RATIO: [0, 0] 
+    KD_RATIO: [1.0, 1.0] 
     DYNAMIC_BATCH_SIZE: 1
     train: True
     teacher: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/retinanet_MBV3Large_FPN_1x_task_dropout=0_run2-with-SyncBN/model_final.pth"
@@ -13,7 +13,7 @@ MODEL:
     FREEZE_AT: 10 # correspond to freeze at 2 in resnet
   TEACHER_BACKBONE:
     NAME: "build_retinanet_mbv3_fpn_backbone"
-  FPN:
+  FPN:                 
     IN_FEATURES: ["res2", "res4", "res5"]
     USE_RELU: True
 DATASETS:

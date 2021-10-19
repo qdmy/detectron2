@@ -46,15 +46,6 @@ def sigmoid_focal_loss_task_dropout(
     """
     # 需要先计算一个sigmoid之前按照mask处理后的select logit，用于与teacher结果的loss计算，因为teacher的结果就是取自sigmoid之前
     b, num_b, c = inputs.shape
-    # if final_mask is not None:
-    #     temp = inputs.view(-1, c)
-    #     selected_logits = torch.masked_select(temp, final_mask).reshape(temp.shape[0], -1)
-    #     selected_log_prob = selected_logits # act_func(selected_logits) # 只在5个元素上算logsoftmax，这样最后的返回值里其他的0才能在计算kd loss的cross entropy loss时保留
-    #     final_logits = temp.new_zeros(temp.shape)
-    #     final_logits[final_mask] = selected_log_prob.reshape(-1) # 这里得到的是没进行激活的pred结果在经过task dropout之后的最终预测logit
-    #     final_logits = final_logits.view(b, num_b, c) # 到这里是得到与teacher result算kd loss的结果
-    # else:
-    #     final_logits = None
 
     if final_mask is not None:
         logits = inputs.view(-1, c)

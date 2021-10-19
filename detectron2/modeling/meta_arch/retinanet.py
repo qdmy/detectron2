@@ -293,7 +293,6 @@ class RetinaNet(nn.Module):
             with torch.no_grad():
                 loss_dict, teacher_results = teacher_model(batched_inputs, super_targets_masks=super_targets_masks, \
                     super_targets_inverse_masks=super_targets_inverse_masks, super_targets_idxs=super_targets_idxs, super_targets=super_targets)
-            # teacher_results = [i.detach() for i in teacher_results]
             # for k, v in loss_dict.items():
             #     v.detach()
         else:
@@ -390,7 +389,7 @@ class RetinaNet(nn.Module):
         if self.task_dropout and not self.train_controller:
             b, num_b, c = pred_logits.shape
             teacher_pred_logits = pred_logits.view(-1, self.num_classes)
-            # teacher_pred_logits = pred_logits
+            teacher_pred_logits.detach()
             # 下面的函数不能用了，还concat一起处理不了了，下面的loss计算函数变了
             # pred_logits, pred_anchor_deltas = permute_all_cls_and_box_to_N_HWA_K_and_concat( # anchor数量维度是这里的A，所以dropout要在这里做
             #     pred_logits, pred_anchor_deltas, self.num_classes
@@ -447,6 +446,14 @@ class RetinaNet(nn.Module):
         #     # final mask也要按照valid mask取一下，那些背景类的final mask也要去掉
         #     gt_labels_target = torch.masked_select(gt_labels_target, final_mask.view(b,-1,c)[valid_mask]).view(gt_labels_target.shape[0], -1)
         
+        # loss_cls = sigmoid_focal_loss_jit(
+        #     pred_logits[valid_mask],
+        #     gt_labels_target.to(pred_logits[0].dtype),
+        #     alpha=self.focal_loss_alpha,
+        #     gamma=self.focal_loss_gamma,
+        #     reduction="sum",
+        # )
+
         loss_cls = sigmoid_focal_loss_task_dropout( # sigmoid_focal_loss_jit(
             pred_logits,
             gt_labels_target.to(pred_logits.dtype),
@@ -456,14 +463,6 @@ class RetinaNet(nn.Module):
             final_mask=final_mask,
             valid_mask=valid_mask,
         )
-
-        # loss_cls, final_logits_before_sigmoid = sigmoid_focal_loss( # sigmoid_focal_loss_jit(
-        #     pred_logits[valid_mask],
-        #     gt_labels_target.to(pred_logits[0].dtype),
-        #     alpha=self.focal_loss_alpha,
-        #     gamma=self.focal_loss_gamma,
-        #     reduction="sum",
-        # )
 
         loss_box_reg = _dense_box_regression_loss(
             anchors,
@@ -480,7 +479,7 @@ class RetinaNet(nn.Module):
             # loss_cls_kd = cross_entropy_loss_with_soft_target(pred_logits[valid_mask], teacher_soft_label[valid_mask])
             loss_cls_kd = sigmoid_focal_loss_task_dropout( # sigmoid_focal_loss_jit(
                 pred_logits,
-                teacher_soft_label[valid_mask].to(pred_logits[0].dtype), # TODO: 要不要把soft label完全变成one hot的
+                teacher_soft_label[valid_mask].to(pred_logits[0].dtype),
                 alpha=self.focal_loss_alpha,
                 gamma=self.focal_loss_gamma,
                 reduction="sum",

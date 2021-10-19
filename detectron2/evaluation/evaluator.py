@@ -27,7 +27,7 @@ def set_running_statistics(model, data_loader, distributed=False):
 
     forward_model = copy.deepcopy(model)
     for name, m in forward_model.named_modules():
-        if isinstance(m, nn.BatchNorm2d):
+        if isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.SyncBatchNorm):
             bn_mean[name] = AverageMeter()
             bn_var[name] = AverageMeter()
 
@@ -83,7 +83,7 @@ def set_running_statistics(model, data_loader, distributed=False):
     for name, m in model.named_modules():
         if name in bn_mean and bn_mean[name].count > 0:
             feature_dim = bn_mean[name].avg.size(0)
-            assert isinstance(m, nn.BatchNorm2d)
+            assert isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.SyncBatchNorm)
             m.running_mean.data[:feature_dim].copy_(bn_mean[name].avg)
             m.running_var.data[:feature_dim].copy_(bn_var[name].avg)
 
@@ -341,7 +341,9 @@ def inference_on_dataset(
             for setting, name in subnet_settings:
                 logger.info("-" * 30 + " Validate {}".format(name) + 30 * "-")
                 model_without_module.backbone.bottom_up.set_active_subnet(**setting)
+                logger.info("Start set_running_statistics() for {}".format(name))
                 set_running_statistics(model, bn_subset_loader)
+                logger.info("Finish set_running_statistics() for {}".format(name))
                 results_per_subnet, final_box_clss_per_subnet, final_targetss_per_subnet, final_output_logitss_per_subnet, final_super_targetss_per_subnet\
                     = inference_subnet_on_dataset(model, data_loader, evaluator, subnet_name=name)
                 all_subnet_results[name] = results_per_subnet
