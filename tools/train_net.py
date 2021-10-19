@@ -20,7 +20,8 @@ import logging
 import os
 from collections import OrderedDict
 import torch
-
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
@@ -49,7 +50,7 @@ class Trainer(DefaultTrainer):
     """
 
     @classmethod
-    def build_evaluator(cls, cfg, dataset_name, output_folder=None):
+    def build_evaluator(cls, cfg, dataset_name, output_folder=None, print_period=0, train_controller=False):
         """
         Create evaluator(s) for a given dataset.
         This uses the special metadata "evaluator_type" associated with each builtin dataset.
@@ -69,7 +70,7 @@ class Trainer(DefaultTrainer):
                 )
             )
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
-            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
+            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder, print_period=print_period, train_controller=train_controller))
         if evaluator_type == "coco_panoptic_seg":
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
         if evaluator_type == "cityscapes_instance":
@@ -121,6 +122,13 @@ def setup(args):
     cfg = get_cfg()
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+
+    img_per_gpu = cfg.SOLVER.IMS_PER_BATCH / args.num_gpus
+    if img_per_gpu < 8:
+        cfg.MODEL.MOBILENETV3.NORM = "SyncBN"
+        cfg.MODEL.OFA_MOBILENETV3.NORM = "SyncBN"
+        cfg.MODEL.RESNETS.NORM = "SyncBN"
+
     cfg.freeze()
     default_setup(cfg, args)
     return cfg
@@ -130,8 +138,8 @@ def main(args):
     cfg = setup(args)
 
     if args.eval_only:
-        model = Trainer.build_model(cfg)
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+        model, _ = Trainer.build_model(cfg)
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR, is_ofa=cfg.MODEL.IS_OFA, resume=args.resume).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
         res = Trainer.test(cfg, model)
@@ -146,7 +154,7 @@ def main(args):
     consider writing your own training loop (see plain_train_net.py) or
     subclassing the trainer.
     """
-    trainer = Trainer(cfg)
+    trainer = Trainer(cfg, resume=args.resume)
     trainer.resume_or_load(resume=args.resume)
     if cfg.TEST.AUG.ENABLED:
         trainer.register_hooks(
@@ -166,3 +174,5 @@ if __name__ == "__main__":
         dist_url=args.dist_url,
         args=(args,),
     )
+
+# TODO: 使用task dropout的时候，训练特别慢：不用只需要16个小时，用的话会多1天

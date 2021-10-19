@@ -8,6 +8,7 @@ from .build import (
     get_detection_dataset_dicts,
     load_proposals_into_dataset,
     print_instances_class_histogram,
+    build_detection_bn_subset_loader
 )
 from .catalog import DatasetCatalog, MetadataCatalog, Metadata
 from .common import DatasetFromList, MapDataset

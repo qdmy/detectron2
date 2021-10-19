@@ -1,5 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from .distributed_sampler import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
+from .distributed_sampler import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler, InferenceSampler_controller
 from .grouped_batch_sampler import GroupedBatchSampler
 
 __all__ = [
@@ -7,4 +7,5 @@ __all__ = [
     "TrainingSampler",
     "InferenceSampler",
     "RepeatFactorTrainingSampler",
+    "InferenceSampler_controller",
 ]

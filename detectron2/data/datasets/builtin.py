@@ -43,6 +43,19 @@ _PREDEFINED_SPLITS_COCO["coco"] = {
     ),
     "coco_2017_train": ("coco/train2017", "coco/annotations/instances_train2017.json"),
     "coco_2017_val": ("coco/val2017", "coco/annotations/instances_val2017.json"),
+    "coco_2017_train_task_dropout": ("coco/train2017", "coco/annotations/instances_train2017.json"), # 从这里开始控制是否本次实验用task dropout
+    "coco_2017_val_task_dropout": ("coco/val2017", "coco/annotations/instances_val2017.json"),
+    "coco_2017_train_controller": ("coco/train2017", "coco/annotations/instances_train2017.json"), # 从这里开始控制是否本次实验是train controller
+    "coco_2017_val_controller": ("coco/val2017", "coco/annotations/instances_val2017.json"), # train controller的时候task dropout一定为true
+
+    # debug用，只load 50张图片就算了
+    "coco_2017_train_50": ("coco/train2017", "coco/annotations/instances_train2017.json"),
+    "coco_2017_val_50": ("coco/val2017", "coco/annotations/instances_val2017.json"),
+    "coco_2017_train_task_dropout_50": ("coco/train2017", "coco/annotations/instances_train2017.json"), # 从这里开始控制是否本次实验用task dropout
+    "coco_2017_val_task_dropout_50": ("coco/val2017", "coco/annotations/instances_val2017.json"),
+    "coco_2017_train_controller_50": ("coco/train2017", "coco/annotations/instances_train2017.json"), # 从这里开始控制是否本次实验是train controller
+    "coco_2017_val_controller_50": ("coco/val2017", "coco/annotations/instances_val2017.json"), # train controller的时候task dropout一定为true
+
     "coco_2017_test": ("coco/test2017", "coco/annotations/image_info_test2017.json"),
     "coco_2017_test-dev": ("coco/test2017", "coco/annotations/image_info_test-dev2017.json"),
     "coco_2017_val_100": ("coco/val2017", "coco/annotations/instances_val2017_100.json"),

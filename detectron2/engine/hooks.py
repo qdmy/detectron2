@@ -339,7 +339,7 @@ class EvalHook(HookBase):
     It is executed every ``eval_period`` iterations and after the last iteration.
     """
 
-    def __init__(self, eval_period, eval_function):
+    def __init__(self, eval_period, eval_function, many_subnets=False, train_controller=False):
         """
         Args:
             eval_period (int): the period to run `eval_function`. Set to 0 to
@@ -354,16 +354,17 @@ class EvalHook(HookBase):
         """
         self._period = eval_period
         self._func = eval_function
+        # self.many_subnets = many_subnets
+        # self.train_controller = train_controller
+        self.logger = logging.getLogger(__name__)
 
-    def _do_eval(self):
-        results = self._func()
-
+    def _do_eval(self, results):
         if results:
             assert isinstance(
                 results, dict
             ), "Eval function must return a dict. Got {} instead.".format(results)
 
-            flattened_results = flatten_results_dict(results)
+            flattened_results = flatten_results_dict(results) # 这个函数会递归的flatten下去，我加的do many subnet eval函数不需要
             for k, v in flattened_results.items():
                 try:
                     v = float(v)
@@ -378,17 +379,34 @@ class EvalHook(HookBase):
         # A barrier make them start the next iteration together.
         comm.synchronize()
 
-    def after_step(self):
+    # def _do_many_subnets_eval(self, results):
+    #     for k, v in results.items():
+    #         assert isinstance(
+    #             v, dict
+    #         ), "Eval function must return a dict for each subnet. Got {} results that not enough.".format(len(v))
+    #         for sub_k, sub_v in v.items():
+    #             self.logger.info("_do_eval() for {}/{}".format(k, sub_k))
+    #             self._do_eval({k: sub_v})
+
+    def after_step(self): # 如果是训练controller时，这个函数需要执行，每一步都要算出当前data上的结果
         next_iter = self.trainer.iter + 1
         if self._period > 0 and next_iter % self._period == 0:
+            results = self._func()
             # do the last eval in after_train
             if next_iter != self.trainer.max_iter:
-                self._do_eval()
+                # if self.many_subnets:
+                #     self._do_many_subnets_eval(results)
+                # else:
+                self._do_eval(results)
 
-    def after_train(self):
+    def after_train(self): 
         # This condition is to prevent the eval from running after a failed training
         if self.trainer.iter + 1 >= self.trainer.max_iter:
-            self._do_eval()
+            results = self._func()
+            # if self.many_subnets:
+            #     self._do_many_subnets_eval(results)
+            # else:
+            self._do_eval(results)
         # func is likely a closure that holds reference to the trainer
         # therefore we clean it to avoid circular reference in the end
         del self._func

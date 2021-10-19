@@ -165,7 +165,7 @@ class VideoVisualizer:
             for i in range(num_instances)
         ]
         colors = self._assign_colors(detected)
-        labels = [self.metadata.thing_classes[k] for k in category_ids]
+        labels = None # [self.metadata.thing_classes[k] for k in category_ids]
 
         frame_visualizer.overlay_instances(
             boxes=None,

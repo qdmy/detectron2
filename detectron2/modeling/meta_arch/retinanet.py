@@ -4,7 +4,7 @@ import math
 import numpy as np
 from typing import Dict, List, Tuple
 import torch
-from fvcore.nn import sigmoid_focal_loss_jit
+from fvcore.nn import sigmoid_focal_loss_jit, sigmoid_focal_loss
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -19,8 +19,12 @@ from ..backbone import Backbone, build_backbone
 from ..box_regression import Box2BoxTransform, _dense_box_regression_loss
 from ..matcher import Matcher
 from ..postprocessing import detector_postprocess
-from .build import META_ARCH_REGISTRY
+from .build import META_ARCH_REGISTRY, sigmoid_focal_loss_task_dropout
+from codebase.third_party.spos_ofa.ofa.imagenet_classification.networks.class_dropout import dropout, sample_dependent_dropout
+from codebase.torchutils.metrics import AccuracyMetric, AverageMetric, SuperclassAccuracyMetric, EstimatedTimeArrival
+from codebase.third_party.spos_ofa.ofa.utils.pytorch_utils import cross_entropy_loss_with_soft_target
 
+# from memory_profiler import profile
 __all__ = ["RetinaNet"]
 
 
@@ -68,6 +72,10 @@ class RetinaNet(nn.Module):
         box2box_transform,
         anchor_matcher,
         num_classes,
+        num_super_classes,
+        task_dropout,
+        train_controller,
+        task_dropout_rate,
         focal_loss_alpha=0.25,
         focal_loss_gamma=2.0,
         smooth_l1_beta=0.0,
@@ -133,7 +141,8 @@ class RetinaNet(nn.Module):
         self.head_in_features = head_in_features
         if len(self.backbone.output_shape()) != len(self.head_in_features):
             logger.warning("[RetinaNet] Backbone produces unused features.")
-
+        # task dropout rate
+        self.task_dropout_rate = task_dropout_rate
         # Anchors
         self.anchor_generator = anchor_generator
         self.box2box_transform = box2box_transform
@@ -166,9 +175,21 @@ class RetinaNet(nn.Module):
         self.loss_normalizer = 100  # initialize with any reasonable #fg that's not too small
         self.loss_normalizer_momentum = 0.9
 
+        self.task_dropout = task_dropout
+        self.train_controller = train_controller
+        self.num_super_classes = num_super_classes
+        # # 计算acc
+        # self.total_accuracy_metric = AccuracyMetric(topk=(1, 5))
+        # self.masked_total_accuracy_metric = AccuracyMetric(topk=(1, 5))
+        # self.superclass_accuracy_metric = SuperclassAccuracyMetric(topk=(1, 5), n_superclass=self.num_super_classes)
+
     @classmethod
-    def from_config(cls, cfg):
-        backbone = build_backbone(cfg)
+    def from_config(cls, cfg, create_teacher=False, train_controller=False):
+        dataset_names = list(cfg.DATASETS.TRAIN)
+        assert len(dataset_names)==1, 'only support one single dataset at a time'
+        task_dropout = True if 'task_dropout' in dataset_names[0] or train_controller else False
+
+        backbone = build_backbone(cfg, create_teacher=create_teacher, train_controller=train_controller)
         backbone_shape = backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in cfg.MODEL.RETINANET.IN_FEATURES]
         head = RetinaNetHead(cfg, feature_shapes)
@@ -186,6 +207,10 @@ class RetinaNet(nn.Module):
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
             "num_classes": cfg.MODEL.RETINANET.NUM_CLASSES,
+            "num_super_classes": cfg.DATASETS.SUPERCLASS_NUM,
+            "task_dropout": task_dropout,
+            "train_controller": train_controller,
+            "task_dropout_rate": cfg.MODEL.TASK_DROPOUT_RATE,
             "head_in_features": cfg.MODEL.RETINANET.IN_FEATURES,
             # Loss parameters:
             "focal_loss_alpha": cfg.MODEL.RETINANET.FOCAL_LOSS_ALPHA,
@@ -241,7 +266,10 @@ class RetinaNet(nn.Module):
         vis_name = f"Top: GT bounding boxes; Bottom: {max_boxes} Highest Scoring Results"
         storage.put_image(vis_name, vis_img)
 
-    def forward(self, batched_inputs: Tuple[Dict[str, Tensor]]):
+    # @profile
+    def forward(self, batched_inputs: Tuple[Dict[str, Tensor]], super_targets_masks=None, \
+        super_targets_inverse_masks=None, super_targets_idxs=None, super_targets=None, teacher_model=None,
+        depth_for_controller=None, ratio_for_controller=None, ks_for_controller=None):
         """
         Args:
             batched_inputs: a list, batched outputs of :class:`DatasetMapper` .
@@ -260,8 +288,22 @@ class RetinaNet(nn.Module):
             loss. Used during training only. In inference, the standard output format, described
             in :doc:`/tutorials/models`.
         """
+        if teacher_model is not None: 
+            teacher_model.train() # 设为train模式从而让teacher里的BN层mean和var对应每一批数据，得到的feature与student更接近
+            with torch.no_grad():
+                loss_dict, teacher_results = teacher_model(batched_inputs, super_targets_masks=super_targets_masks, \
+                    super_targets_inverse_masks=super_targets_inverse_masks, super_targets_idxs=super_targets_idxs, super_targets=super_targets)
+            # teacher_results = [i.detach() for i in teacher_results]
+            # for k, v in loss_dict.items():
+            #     v.detach()
+        else:
+            teacher_results =None
         images = self.preprocess_image(batched_inputs)
-        features = self.backbone(images.tensor)
+        image_sizes = images.image_sizes
+        if self.train_controller:
+            features = self.backbone(images.tensor, depths=depth_for_controller, ratios=ratio_for_controller, kernel_sizes=ks_for_controller)
+        else:
+            features = self.backbone(images.tensor)
         features = [features[f] for f in self.head_in_features]
 
         anchors = self.anchor_generator(features)
@@ -275,33 +317,55 @@ class RetinaNet(nn.Module):
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
 
-            gt_labels, gt_boxes = self.label_anchors(anchors, gt_instances)
-            losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
+            gt_labels, gt_boxes, matched_idxs_for_mask = self.label_anchors(anchors, gt_instances)
+            losses, teacher_results = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes, 
+                                matched_idxs_for_mask, super_targets_masks, super_targets_inverse_masks, teacher_results=teacher_results)
 
             if self.vis_period > 0:
                 storage = get_event_storage()
                 if storage.iter % self.vis_period == 0:
                     results = self.inference(
-                        anchors, pred_logits, pred_anchor_deltas, images.image_sizes
+                        anchors, pred_logits, pred_anchor_deltas, image_sizes, 
+                        super_targets_idxs, super_targets, gt_labels, matched_idxs_for_mask
                     )
                     self.visualize_training(batched_inputs, results)
-
-            return losses
+            # del images, features, anchors, pred_logits, pred_anchor_deltas, gt_labels, gt_boxes, matched_idxs_for_mask
+            return losses, teacher_results
         else:
-            results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
+            if self.task_dropout:
+                assert "instances" in batched_inputs[0], "Instance annotations are missing in testing for task dropout!"
+                gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+                gt_labels, gt_boxes, matched_idxs_for_mask = self.label_anchors(anchors, gt_instances)
+                if self.train_controller:
+                    losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
+                # 正常推理的时候还是需要这些结果，才能得出mAP
+                results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes,
+                                    super_targets_idxs, super_targets, gt_labels, matched_idxs_for_mask)
+            else:
+                results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
+
             if torch.jit.is_scripting():
                 return results
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
-                results, batched_inputs, images.image_sizes
+                results, batched_inputs, image_sizes
             ):
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])
                 r = detector_postprocess(results_per_image, height, width)
                 processed_results.append({"instances": r})
+            
+            # del images, features, anchors, pred_logits, pred_anchor_deltas, gt_labels, gt_boxes, matched_idxs_for_mask
+
+            if self.task_dropout:
+                if self.train_controller:
+                    return losses, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss # 除了loss，返回的其他值都是为了统计结果
+                else:
+                    return processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss
             return processed_results
 
-    def losses(self, anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes):
+    def losses(self, anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes, matched_idxs_for_mask=None,
+                super_targets_masks=None, super_targets_inverse_masks=None, teacher_results=None):
         """
         Args:
             anchors (list[Boxes]): a list of #feature level Boxes
@@ -318,6 +382,46 @@ class RetinaNet(nn.Module):
                 storing the loss. Used during training only. The dict keys are:
                 "loss_cls" and "loss_box_reg"
         """
+        pred_logits = cat(pred_logits, dim=1) # 下面算loss里本来进行的cat。由于task dropout需要进行cat处理，所以直接提前搞了，下面的loss直接用
+
+        # assert teacher_results is None, "when not task dropout, teacher does not exist"
+        final_mask = None
+
+        if self.task_dropout and not self.train_controller:
+            b, num_b, c = pred_logits.shape
+            teacher_pred_logits = pred_logits.view(-1, self.num_classes)
+            # teacher_pred_logits = pred_logits
+            # 下面的函数不能用了，还concat一起处理不了了，下面的loss计算函数变了
+            # pred_logits, pred_anchor_deltas = permute_all_cls_and_box_to_N_HWA_K_and_concat( # anchor数量维度是这里的A，所以dropout要在这里做
+            #     pred_logits, pred_anchor_deltas, self.num_classes
+            # )  # Shapes: (N x R, K) and (N x R, 4), respectively. 这里把一个batch的图片concat到一起了，需要分开处理task dropout
+            # # task dropout
+            new_super_targets_masks = []
+            new_super_targets_inverse_masks = []
+            for i in range(len(super_targets_masks)):
+                matched_idxs_per_image = matched_idxs_for_mask[i]
+                new_super_targets_masks.append(torch.tensor(super_targets_masks[i], dtype=torch.float32)[matched_idxs_per_image])
+                new_super_targets_inverse_masks.append(torch.tensor(super_targets_inverse_masks[i], dtype=torch.float32)[matched_idxs_per_image])
+            super_targets_masks = torch.cat(new_super_targets_masks, dim=0)
+            super_targets_inverse_masks = torch.cat(new_super_targets_inverse_masks, dim=0)
+
+            final_mask = sample_dependent_dropout(super_targets_masks, super_targets_inverse_masks, self.task_dropout_rate).cuda()
+            # 下面的focal loss里，如果进行task dropout，就要先进行sigmoid操作，再去进行mask
+            # 但是sigmoid跟loss包装在一起又比较好，所以把做mask需要的参数传给那个函数，在其内部进行mask操作
+
+            if teacher_results is not None: # teacher的结果要用student的final mask来计算
+                assert isinstance(teacher_results, list) and len(teacher_results)==2, "teacher results should contain teacher pred cls and box"
+                teacher_pred_boxes = teacher_results[1]
+                teacher_pred_cls = teacher_results[0]
+
+                teacher_selected_logits = torch.masked_select(teacher_pred_cls, final_mask).view(teacher_pred_cls.shape[0], -1)
+                teacher_selected_label = F.softmax(teacher_selected_logits, dim=1)
+                teacher_soft_label = teacher_pred_cls.new_zeros(teacher_pred_cls.shape)
+                teacher_soft_label[final_mask] = teacher_selected_label.view(-1)
+                # 到这里，就把原本的model输出的预测结果，变为了使用task dropout后的
+                # 要把pred_logits的shape改回去
+                teacher_soft_label = teacher_soft_label.view(b, num_b, c)
+
         num_images = len(gt_labels)
         gt_labels = torch.stack(gt_labels)  # (N, R)
 
@@ -333,13 +437,33 @@ class RetinaNet(nn.Module):
         gt_labels_target = F.one_hot(gt_labels[valid_mask], num_classes=self.num_classes + 1)[
             :, :-1
         ]  # no loss for the last (background) class
-        loss_cls = sigmoid_focal_loss_jit(
-            cat(pred_logits, dim=1)[valid_mask],
-            gt_labels_target.to(pred_logits[0].dtype),
+
+        """
+        下面这种只把有值的位置取出来去计算是不行的。应该按照师兄说的那样，在sigmoid之后再用mask去取值
+        """
+        # 如果做了task dropout，那么每个object的pred_logits vector里只有5个位置非0，这样去和one hot向量算cls loss就很大；所以这里把非0的元素按照mask取出来
+        # if self.task_dropout:
+        #     pred_logits = torch.masked_select(pred_logits.view(-1, pred_logits.shape[-1]), final_mask).view(b, num_b, -1)
+        #     # final mask也要按照valid mask取一下，那些背景类的final mask也要去掉
+        #     gt_labels_target = torch.masked_select(gt_labels_target, final_mask.view(b,-1,c)[valid_mask]).view(gt_labels_target.shape[0], -1)
+        
+        loss_cls = sigmoid_focal_loss_task_dropout( # sigmoid_focal_loss_jit(
+            pred_logits,
+            gt_labels_target.to(pred_logits.dtype),
             alpha=self.focal_loss_alpha,
             gamma=self.focal_loss_gamma,
             reduction="sum",
+            final_mask=final_mask,
+            valid_mask=valid_mask,
         )
+
+        # loss_cls, final_logits_before_sigmoid = sigmoid_focal_loss( # sigmoid_focal_loss_jit(
+        #     pred_logits[valid_mask],
+        #     gt_labels_target.to(pred_logits[0].dtype),
+        #     alpha=self.focal_loss_alpha,
+        #     gamma=self.focal_loss_gamma,
+        #     reduction="sum",
+        # )
 
         loss_box_reg = _dense_box_regression_loss(
             anchors,
@@ -351,10 +475,49 @@ class RetinaNet(nn.Module):
             smooth_l1_beta=self.smooth_l1_beta,
         )
 
-        return {
-            "loss_cls": loss_cls / self.loss_normalizer,
-            "loss_box_reg": loss_box_reg / self.loss_normalizer,
-        }
+        if teacher_results is not None:
+            # assert final_logits_after_logsoftmax is not None, "this should not happen if you want to compute loss with teacher"
+            # loss_cls_kd = cross_entropy_loss_with_soft_target(pred_logits[valid_mask], teacher_soft_label[valid_mask])
+            loss_cls_kd = sigmoid_focal_loss_task_dropout( # sigmoid_focal_loss_jit(
+                pred_logits,
+                teacher_soft_label[valid_mask].to(pred_logits[0].dtype), # TODO: 要不要把soft label完全变成one hot的
+                alpha=self.focal_loss_alpha,
+                gamma=self.focal_loss_gamma,
+                reduction="sum",
+                final_mask=final_mask,
+                valid_mask=valid_mask,
+            )
+
+            loss_reg_kd = _dense_box_regression_loss(
+                anchors,
+                self.box2box_transform,
+                pred_anchor_deltas,
+                teacher_pred_boxes,
+                pos_mask,
+                box_reg_loss_type=self.box_reg_loss_type,
+                smooth_l1_beta=self.smooth_l1_beta,
+            )
+
+        if teacher_results is None:
+            if not self.train_controller:
+                anchors = type(anchors[0]).cat(anchors).tensor
+                teacher_pred_boxes = [self.box2box_transform.apply_deltas(k, anchors).detach() for k in cat(pred_anchor_deltas, dim=1)]
+                return {
+                    "loss_cls": loss_cls / self.loss_normalizer,
+                    "loss_box_reg": loss_box_reg / self.loss_normalizer,
+                }, [teacher_pred_logits, teacher_pred_boxes]
+            else:
+                return {
+                    "loss_cls": loss_cls / self.loss_normalizer,
+                    "loss_box_reg": loss_box_reg / self.loss_normalizer,
+                }
+        else:
+            return {
+                "loss_cls": loss_cls / self.loss_normalizer,
+                "loss_box_reg": loss_box_reg / self.loss_normalizer,
+                "loss_cls_kd": loss_cls_kd / self.loss_normalizer,
+                "loss_reg_kd": loss_reg_kd / self.loss_normalizer,
+            }, None
 
     @torch.no_grad()
     def label_anchors(self, anchors, gt_instances):
@@ -375,6 +538,7 @@ class RetinaNet(nn.Module):
             across feature maps. The values are the matched gt boxes for each anchor.
             Values are undefined for those anchors not labeled as foreground.
         """
+        matched_idxs_for_mask = [] # 用这个来保存每个anchor对应哪个object，进而从mask里取出
         anchors = Boxes.cat(anchors)  # Rx4
 
         gt_labels = []
@@ -382,6 +546,7 @@ class RetinaNet(nn.Module):
         for gt_per_image in gt_instances:
             match_quality_matrix = pairwise_iou(gt_per_image.gt_boxes, anchors)
             matched_idxs, anchor_labels = self.anchor_matcher(match_quality_matrix)
+            matched_idxs_for_mask.append(matched_idxs)
             del match_quality_matrix
 
             if len(gt_per_image) > 0:
@@ -399,7 +564,7 @@ class RetinaNet(nn.Module):
             gt_labels.append(gt_labels_i)
             matched_gt_boxes.append(matched_gt_boxes_i)
 
-        return gt_labels, matched_gt_boxes
+        return gt_labels, matched_gt_boxes, matched_idxs_for_mask
 
     def inference(
         self,
@@ -407,6 +572,10 @@ class RetinaNet(nn.Module):
         pred_logits: List[Tensor],
         pred_anchor_deltas: List[Tensor],
         image_sizes: List[Tuple[int, int]],
+        super_targets_idxs=None, 
+        super_targets=None,
+        gt_classes=None,
+        matched_idxs_for_acc=None
     ):
         """
         Arguments:
@@ -420,13 +589,36 @@ class RetinaNet(nn.Module):
             results (List[Instances]): a list of #images elements.
         """
         results: List[Instances] = []
+        final_box_clss = []
+        final_targetss = []
+        final_output_logitss = []
+        final_super_targetss = []
         for img_idx, image_size in enumerate(image_sizes):
             pred_logits_per_image = [x[img_idx] for x in pred_logits]
             deltas_per_image = [x[img_idx] for x in pred_anchor_deltas]
-            results_per_image = self.inference_single_image(
-                anchors, pred_logits_per_image, deltas_per_image, image_size
-            )
+
+            if self.task_dropout:
+                targets_per_image = gt_classes[img_idx]
+                super_targets_idx_per_image = super_targets_idxs[img_idx]
+                super_targets_per_image = super_targets[img_idx]
+                matched_idxs_per_image = matched_idxs_for_acc[img_idx]
+
+                results_per_image, final_box_cls, final_targets, final_output_logits, final_super_targets = self.inference_single_image(
+                    # 这个变量为什么不是anchors_per_image，原来是anchors
+                    anchors, pred_logits_per_image, deltas_per_image, image_size, targets_per_image, \
+                    torch.tensor(super_targets_idx_per_image).cuda(), torch.tensor(super_targets_per_image).cuda(), matched_idxs_per_image,
+                )
+                final_box_clss.append(final_box_cls)
+                final_targetss.append(final_targets)
+                final_output_logitss.append(final_output_logits)
+                final_super_targetss.append(final_super_targets)
+            else:
+                results_per_image = self.inference_single_image(
+                    # 这个变量为什么不是anchors_per_image，原来是anchors
+                    anchors, pred_logits_per_image, deltas_per_image, image_size)
             results.append(results_per_image)
+        if self.task_dropout:
+            return results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss
         return results
 
     def inference_single_image(
@@ -435,6 +627,10 @@ class RetinaNet(nn.Module):
         box_cls: List[Tensor],
         box_delta: List[Tensor],
         image_size: Tuple[int, int],
+        targets=None,
+        super_targets_idx=None, 
+        super_targets=None, 
+        matched_idxs=None
     ):
         """
         Single-image inference. Return bounding-box detection results by thresholding
@@ -451,12 +647,37 @@ class RetinaNet(nn.Module):
         Returns:
             Same as `inference`, but for only one image.
         """
+        if self.task_dropout:
+            # 要像loss函数里处理mask一样，把targets和super targets也处理一下，让每个feature level的每个box有一个对应的
+            super_targets_idx = super_targets_idx[matched_idxs]
+            super_targets = super_targets[matched_idxs]
+            final_box_cls = []
+            final_targets = []
+            final_output_logits = []
+            final_super_targets = []
+
         boxes_all = []
         scores_all = []
         class_idxs_all = []
 
         # Iterate over every feature level
         for box_cls_i, box_reg_i, anchors_i in zip(box_cls, box_delta, anchors):
+            if self.task_dropout:
+                box_num = box_cls_i.size(0)
+                # 只取对应当前feature level的
+                targets_i = targets[:box_num]
+                super_targets_idx_i = super_targets_idx[:box_num]
+                super_targets_i = super_targets[:box_num]
+                # 把上一个feature level的去掉
+                targets = targets[box_num:]
+                super_targets_idx = super_targets_idx[box_num:]
+                super_targets = super_targets[box_num:]
+
+                selected_logits_i = torch.gather(box_cls_i, 1, super_targets_idx_i)
+                output_logits_i = box_cls_i.new_zeros(box_cls_i.shape)
+                output_logits_i.scatter_(dim=1, index=super_targets_idx_i, src=selected_logits_i)
+                box_cls_i_for_acc = box_cls_i # 备份一个用来后面计算acc
+            
             # (HxWxAxK,)
             predicted_prob = box_cls_i.flatten().sigmoid_()
 
@@ -484,10 +705,22 @@ class RetinaNet(nn.Module):
             boxes_all.append(predicted_boxes)
             scores_all.append(predicted_prob)
             class_idxs_all.append(classes_idxs)
+            
+            if self.task_dropout:
+                # 用来计算acc
+                final_box_cls.append(box_cls_i_for_acc[anchor_idxs])
+                final_targets.append(targets_i[anchor_idxs])
+                final_output_logits.append(output_logits_i[anchor_idxs])
+                final_super_targets.append(super_targets_i[anchor_idxs])
 
-        boxes_all, scores_all, class_idxs_all = [
-            cat(x) for x in [boxes_all, scores_all, class_idxs_all]
-        ]
+        if self.task_dropout:
+            boxes_all, scores_all, class_idxs_all, final_box_cls, final_output_logits, final_super_targets, final_targets = [
+                cat(x) for x in [boxes_all, scores_all, class_idxs_all, final_box_cls, final_output_logits, final_super_targets, final_targets]
+            ]
+        else:
+            boxes_all, scores_all, class_idxs_all = [
+                cat(x) for x in [boxes_all, scores_all, class_idxs_all]
+            ]
         keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.test_nms_thresh)
         keep = keep[: self.max_detections_per_image]
 
@@ -495,7 +728,17 @@ class RetinaNet(nn.Module):
         result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
-        return result
+
+        # if self.task_dropout:
+        #     # 就像分类里把batch size设为1那样，在这里每张图片update一次
+        #     self.total_accuracy_metric.update(final_box_cls, final_targets)
+        #     self.masked_total_accuracy_metric.update(final_output_logits, final_targets)
+        #     self.superclass_accuracy_metric.update(final_output_logits, final_targets, final_super_targets)
+
+        if self.task_dropout:
+            return result, final_box_cls, final_targets, final_output_logits, final_super_targets
+        else:
+            return result
 
     def preprocess_image(self, batched_inputs: Tuple[Dict[str, Tensor]]):
         """

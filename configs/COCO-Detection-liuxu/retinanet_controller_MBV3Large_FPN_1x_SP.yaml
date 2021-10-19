@@ -1,0 +1,24 @@
+_BASE_: "../Base-RetinaNet.yaml"
+MODEL:
+  IS_OFA: False
+  OFA_MOBILENETV3:
+    train: False
+  TASK_DROPOUT_RATE: 0.0
+  WEIGHTS: ""
+  CONTROLLER:
+    TRAIN: True
+    NAME: "SP_MobileNetV3Controller"
+    TEACHER:
+      BACKBONE: "build_retinanet_sp_ofa_mbv3_fpn_backbone"
+      WEIGHT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0.05-SyncBN-2kd_loss/model_final.pth"
+  FPN:
+    IN_FEATURES: ["res2", "res4", "res5"]
+    USE_RELU: True
+DATASETS:
+  TRAIN: ("coco_2017_train_controller",)
+  TEST: ("coco_2017_val_controller",)
+SOLVER:
+  IMS_PER_BATCH: 16
+TEST:
+  EVAL_PERIOD: 1
+OUTPUT_DIR: output/coco-detection/controller/retinanet_controller_MBV3Large_FPN_1x_SP

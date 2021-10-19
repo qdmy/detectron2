@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import time
 import weakref
+import random
 from typing import Dict, List, Optional
 import torch
 from torch.nn.parallel import DataParallel, DistributedDataParallel
@@ -12,6 +13,7 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 import detectron2.utils.comm as comm
 from detectron2.utils.events import EventStorage, get_event_storage
 from detectron2.utils.logger import _log_api_usage
+from codebase.torchutils.common import unwarp_module
 
 __all__ = ["HookBase", "TrainerBase", "SimpleTrainer", "AMPTrainer"]
 
@@ -232,7 +234,9 @@ class SimpleTrainer(TrainerBase):
     or write your own training loop.
     """
 
-    def __init__(self, model, data_loader, optimizer):
+    def __init__(self, model, data_loader, optimizer, task_dropout=False, teacher_model=None, \
+        kd_ratio=[1e-4, 1.0], num_sampled_subset=1, train_controller=False, num_class_per_superclass=5, \
+            multi_path_mbv3=False, loss_lambda=1e-2):
         """
         Args:
             model: a torch Module. Takes a data from data_loader and returns a
@@ -249,11 +253,28 @@ class SimpleTrainer(TrainerBase):
         like evaluation during training, you can overwrite its train() method.
         """
         model.train()
-
+        if teacher_model is not None and train_controller:
+            teacher_model.eval()
+        self.train_controller = train_controller
         self.model = model
+        self.teacher_model = teacher_model
         self.data_loader = data_loader
-        self._data_loader_iter = iter(data_loader)
+        if not self.train_controller:
+            self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer
+        self.task_dropout = task_dropout
+        self.kd_ratio = list(kd_ratio)
+        assert len(kd_ratio)==2, "kd ratio should have 2 numbers, first for cls, second for box"
+        self.num_sampled_subset = num_sampled_subset
+
+        self.num_class_per_superclass = num_class_per_superclass
+        self.multi_path_mbv3 = multi_path_mbv3
+        self.loss_lambda = loss_lambda
+
+        # 用来保留每个step中controller算出的depth，ratio，kernel size，传给test那个函数来得出结果
+        self.depth_for_controller = None
+        self.ratio_for_controller = None
+        self.kernel_size_for_controller = None
 
     def run_step(self):
         """
@@ -265,28 +286,189 @@ class SimpleTrainer(TrainerBase):
         If you want to do something with the data, you can wrap the dataloader.
         """
         data = next(self._data_loader_iter)
-        data_time = time.perf_counter() - start
+        if self.task_dropout:
+            inputs = np.array(data, dtype=object).T
+            data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = inputs
 
+        data_time = time.perf_counter() - start
+        self.optimizer.zero_grad()
         """
         If you want to do something with the losses, you can wrap the model.
         """
-        loss_dict = self.model(data)
-        if isinstance(loss_dict, torch.Tensor):
-            losses = loss_dict
-            loss_dict = {"total_loss": loss_dict}
-        else:
-            if len(loss_dict) == 0:
-                return
-            losses = sum(loss_dict.values())
+        if self.teacher_model is not None: # 用这个来判断是不是train ofa行不行
+            all_subnet_loss_dicts = []
+            final_loss_dict = {}
+            for _ in range(self.num_sampled_subset):
+                with torch.autograd.set_detect_anomaly(True):
+                    subnet_seed = int("%d%.3d%.3d" % (self.iter, _, 0))
+                    # subnet_seed = epoch * 9999 + iter_
+                    random.seed(subnet_seed)
+                    if hasattr(self.model, "module"):
+                        unwarp_module(self.model.module.backbone.bottom_up).sample_active_subnet()
+                    else:
+                        unwarp_module(self.model.backbone.bottom_up).sample_active_subnet()
 
-        """
-        If you need to accumulate gradients or do something similar, you can
-        wrap the optimizer with your custom `zero_grad()` method.
-        """
-        self.optimizer.zero_grad()
-        losses.backward()
+                    if self.task_dropout:
+                        loss_dict, _ = self.model(data, super_targets_masks=super_targets_masks, \
+                            super_targets_inverse_masks=super_targets_inverse_masks, \
+                                super_targets_idxs=super_targets_idxs, super_targets=super_targets, \
+                                    teacher_model=self.teacher_model)
+                    else:
+                        loss_dict, _ = self.model(data)
+                    if isinstance(loss_dict, torch.Tensor):
+                        losses = loss_dict
+                        loss_dict = {"total_loss": losses}
+                    else:
+                        if len(loss_dict) == 0:
+                            return
+                        if self.teacher_model is not None:
+                            losses = 0
+                            for k, v in loss_dict.items():
+                                if k == "loss_reg_kd":
+                                    losses += v*self.kd_ratio[1]
+                                elif k == "loss_cls_kd":
+                                    losses += v*self.kd_ratio[0]
+                                else:
+                                    losses += v
+                        else:
+                            losses = sum(loss_dict.values())
+                    losses.backward()
+                    all_subnet_loss_dicts.append(loss_dict)
+            for los in all_subnet_loss_dicts:
+                for k, v in los.items():
+                    if k not in final_loss_dict.keys():
+                        final_loss_dict[k] = v
+                    final_loss_dict[k] += v
+            
+            for k, v in final_loss_dict.items():
+                final_loss_dict[k] = v/self.num_sampled_subset
+            loss_dict = final_loss_dict
+        else:
+            if self.task_dropout:
+                loss_dict, _ = self.model(data, super_targets_masks=super_targets_masks, \
+                    super_targets_inverse_masks=super_targets_inverse_masks, \
+                        super_targets_idxs=super_targets_idxs, super_targets=super_targets, \
+                            teacher_model=self.teacher_model)
+            else:
+                loss_dict, _ = self.model(data)
+            if isinstance(loss_dict, torch.Tensor):
+                losses = loss_dict
+                loss_dict = {"total_loss": losses}
+            else:
+                if len(loss_dict) == 0:
+                    return
+                losses = sum(loss_dict.values())
+
+            """
+            If you need to accumulate gradients or do something similar, you can
+            wrap the optimizer with your custom `zero_grad()` method.
+            """
+            losses.backward()
 
         self._write_metrics(loss_dict, data_time)
+
+        """
+        If you need gradient clipping/scaling or other processing, you can
+        wrap the optimizer with your custom `step()` method. But it is
+        suboptimal as explained in https://arxiv.org/abs/2006.15704 Sec 3.2.4
+        """
+        self.optimizer.step()
+
+    def run_step_controller(self, tau, loss_type="mse", data=None, superclass_id=0): # 此时，model是controller，teacher model是mp/sp_ofa_mbv3
+        """
+        Implement the standard training logic described above.
+        """
+        # 把teacher model设为eval
+        self.model.train()
+        self.teacher_model.eval() 
+
+        assert self.model.training, "[SimpleTrainer] model was changed to eval mode!"
+        assert not self.teacher_model.training, "[RetinaNet] teacher model was changed to train mode!"
+        start = time.perf_counter()
+        """
+        If you want to do something with the data, you can wrap the dataloader.
+        """
+
+        data_time = time.perf_counter() - start
+        self.optimizer.zero_grad()
+        """
+        If you want to do something with the losses, you can wrap the model.
+        """
+        assert self.teacher_model is not None
+        
+        data, super_targets_idxs, super_targets = data
+        superclass_id = torch.tensor([superclass_id], dtype=torch.long).cuda()
+
+        constraint = unwarp_module(self.model).sample_constraint()
+        if self.multi_path_mbv3:
+            depths, ratios, ks, depths_wbs, depths_probs, ratio_wbs, ratios_probs, ks_wbs, ks_probs \
+                = self.model([constraint], superclass_id, tau)
+            # 保留下来传给test
+            self.depth_for_controller = depths_probs
+            self.ratio_for_controller = ratios_probs
+            self.kernel_size_for_controller = ks_probs
+
+            # TODO: 这里同时得到了loss和inference的结果，怎么展示，想想怎么test，多久test一次。test应该用的是这里一样的data，要重写个test controller函数吗？
+            teacher_loss, *_ = self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depths_probs, \
+                ratio_for_controller=ratios_probs, ks_for_controller=ks_probs) # 让teacher model在推理的时候计算loss，返回一个dict，反正它是把loss的计算包装在teacher model的forward里的，就用目标检测默认的focal loss和regression loss
+            if hasattr(self.teacher_model, "module"):
+                flops = unwarp_module(self.teacher_model.module.backbone.bottom_up).get_flops(
+                    depths_probs,
+                    ratios_probs,
+                    ks_probs,
+                    num_class_per_superclass=self.num_class_per_superclass
+                ) / 1e6
+            else:
+                flops = unwarp_module(self.teacher_model.backbone.bottom_up).get_flops(
+                    depths_probs,
+                    ratios_probs,
+                    ks_probs,
+                    num_class_per_superclass=self.num_class_per_superclass
+                ) / 1e6
+            mse_loss = (flops - constraint) * (flops - constraint)
+        else:
+            _, _, _, depth_cum_indicators, ratio_cum_indicators, kernel_cum_size_indicators \
+                = self.model([constraint], superclass_id)
+            # 保留下来传给test
+            self.depth_for_controller = depth_cum_indicators
+            self.ratio_for_controller = ratio_cum_indicators
+            self.kernel_size_for_controller = kernel_cum_size_indicators
+
+            teacher_loss, *_ = self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depth_cum_indicators, \
+                ratio_for_controller=ratio_cum_indicators, ks_for_controller=kernel_cum_size_indicators)
+            if hasattr(self.teacher_model, "module"):
+                flops = unwarp_module(self.teacher_model.module.backbone.bottom_up).get_flops(
+                    depth_cum_indicators,
+                    ratio_cum_indicators,
+                    kernel_cum_size_indicators,
+                    num_class_per_superclass=self.num_class_per_superclass
+                ) / 1e6
+            else:
+                flops = unwarp_module(self.teacher_model.backbone.bottom_up).get_flops(
+                    depth_cum_indicators,
+                    ratio_cum_indicators,
+                    kernel_cum_size_indicators,
+                    num_class_per_superclass=self.num_class_per_superclass
+                ) / 1e6
+            if loss_type == "mse":
+                mse_loss = (flops - constraint) * (flops - constraint)
+            elif loss_type == "mse_half":
+                if flops <= constraint:
+                    mse_loss = 0
+                else:
+                    mse_loss = (flops - constraint) * (flops - constraint)
+            else:
+                raise NotImplementedError
+        teacher_loss["mse_loss"] = mse_loss # 把mse loss加进dict
+        losses = 0
+        for k, v in teacher_loss.items():
+            teacher_loss[k] = v.item()
+            if k == "mse_loss":
+                losses += v.item() * self.loss_lambda
+            else:
+                losses += v.item()
+        losses.backward()
+        self._write_metrics(teacher_loss, data_time)
 
         """
         If you need gradient clipping/scaling or other processing, you can
@@ -326,7 +508,25 @@ class SimpleTrainer(TrainerBase):
             metrics_dict = {
                 k: np.mean([x[k] for x in all_metrics_dict]) for k in all_metrics_dict[0].keys()
             }
-            total_losses_reduced = sum(metrics_dict.values())
+
+            # 换种方式算total loss
+            total_losses_reduced = 0 
+            if self.train_controller:
+                for k, v in metrics_dict.items():
+                    if k == "mse_loss":
+                        total_losses_reduced += v * self.loss_lambda
+                    else:
+                        total_losses_reduced += v
+            else:
+                for k, v in metrics_dict.items():
+                    if k == "loss_reg_kd":
+                        total_losses_reduced += v*self.kd_ratio[1]
+                    elif k == "loss_cls_kd":
+                        total_losses_reduced += v*self.kd_ratio[0]
+                    else:
+                        total_losses_reduced += v
+            # total_losses_reduced = sum(metrics_dict.values())
+            
             if not np.isfinite(total_losses_reduced):
                 raise FloatingPointError(
                     f"Loss became infinite or NaN at iteration={self.iter}!\n"
@@ -353,7 +553,9 @@ class AMPTrainer(SimpleTrainer):
     in the training loop.
     """
 
-    def __init__(self, model, data_loader, optimizer, grad_scaler=None):
+    def __init__(self, model, data_loader, optimizer, grad_scaler=None, task_dropout=False, \
+        teacher_model=None, kd_ratio=0, num_sampled_subset=1, \
+            train_controller=False, num_class_per_superclass=0, multi_path_mbv3=False, loss_lambda=1e-2):
         """
         Args:
             model, data_loader, optimizer: same as in :class:`SimpleTrainer`.
@@ -364,7 +566,10 @@ class AMPTrainer(SimpleTrainer):
             assert not (model.device_ids and len(model.device_ids) > 1), unsupported
         assert not isinstance(model, DataParallel), unsupported
 
-        super().__init__(model, data_loader, optimizer)
+        super().__init__(model, data_loader, optimizer, task_dropout=task_dropout, teacher_model=None, kd_ratio=kd_ratio, \
+            num_sampled_subset=num_sampled_subset, \
+                train_controller=train_controller, num_class_per_superclass=num_class_per_superclass, \
+                    multi_path_mbv3=multi_path_mbv3, loss_lambda=loss_lambda)
 
         if grad_scaler is None:
             from torch.cuda.amp import GradScaler
@@ -382,15 +587,81 @@ class AMPTrainer(SimpleTrainer):
 
         start = time.perf_counter()
         data = next(self._data_loader_iter)
+        if self.task_dropout:
+            inputs = np.array(data, dtype=object).T
+            data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = inputs
+
         data_time = time.perf_counter() - start
 
         with autocast():
-            loss_dict = self.model(data)
+            if self.task_dropout:
+                loss_dict, _ = self.model(data, super_targets_masks=super_targets_masks, super_targets_inverse_masks=super_targets_inverse_masks, teacher_model=self.teacher_model)
+            else:
+                loss_dict, _ = self.model(data)
             if isinstance(loss_dict, torch.Tensor):
                 losses = loss_dict
                 loss_dict = {"total_loss": loss_dict}
             else:
-                losses = sum(loss_dict.values())
+                # losses = sum(loss_dict.values())
+                if len(loss_dict) == 0:
+                    return
+                if self.teacher_model is not None:
+                    losses = 0
+                    for k, v in loss_dict.items():
+                        if k == "loss_reg_kd":
+                            losses += v*self.kd_ratio[1]
+                        elif k == "loss_cls_kd":
+                            losses += v*self.kd_ratio[0]
+                        else:
+                            losses += v
+                else:
+                    losses = sum(loss_dict.values())
+
+        self.optimizer.zero_grad()
+        self.grad_scaler.scale(losses).backward()
+
+        self._write_metrics(loss_dict, data_time)
+
+        self.grad_scaler.step(self.optimizer)
+        self.grad_scaler.update()
+
+    def run_step_controller(self, tau, loss_type="mse", superclass_id=0, data_idx=0):
+        """
+        Implement the AMP training logic.
+        """
+        assert self.model.training, "[AMPTrainer] model was changed to eval mode!"
+        assert torch.cuda.is_available(), "[AMPTrainer] CUDA is required for AMP training!"
+        from torch.cuda.amp import autocast
+
+        start = time.perf_counter()
+        data = next(self._data_loader_iter)
+        if self.task_dropout:
+            inputs = np.array(data, dtype=object).T
+            data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = inputs
+
+        data_time = time.perf_counter() - start
+
+        with autocast():
+            if self.task_dropout:
+                loss_dict, _ = self.model(data, super_targets_masks=super_targets_masks, super_targets_inverse_masks=super_targets_inverse_masks, teacher_model=self.teacher_model)
+            else:
+                loss_dict, _ = self.model(data)
+            if isinstance(loss_dict, torch.Tensor):
+                losses = loss_dict
+                loss_dict = {"total_loss": loss_dict}
+            else:
+                # losses = sum(loss_dict.values())
+                if len(loss_dict) == 0:
+                    return
+                if self.teacher_model is not None:
+                    losses = 0
+                    for k, v in loss_dict.items():
+                        if k not in ["loss_cls_kd", "loss_reg_kd"]:
+                            losses += v
+                        else:
+                            losses += v*self.kd_ratio
+                else:
+                    losses = sum(loss_dict.values())
 
         self.optimizer.zero_grad()
         self.grad_scaler.scale(losses).backward()

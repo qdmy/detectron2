@@ -22,6 +22,8 @@ _C = CN()
 _C.VERSION = 2
 
 _C.MODEL = CN()
+_C.MODEL.IS_OFA = False
+_C.MODEL.TASK_DROPOUT_RATE = 0.6
 _C.MODEL.LOAD_PROPOSALS = False
 _C.MODEL.MASK_ON = False
 _C.MODEL.KEYPOINT_ON = False
@@ -100,6 +102,10 @@ _C.DATASETS.TEST = ()
 _C.DATASETS.PROPOSAL_FILES_TEST = ()
 # Number of top scoring precomputed proposals to keep for test
 _C.DATASETS.PRECOMPUTED_PROPOSAL_TOPK_TEST = 1000
+# superclass number
+_C.DATASETS.SUPERCLASS_NUM = 11
+# control debug data size, only load part
+_C.DATASETS.STOP_LOAD = -1
 
 # -----------------------------------------------------------------------------
 # DataLoader
@@ -113,6 +119,11 @@ _C.DATALOADER.NUM_WORKERS = 4
 _C.DATALOADER.ASPECT_RATIO_GROUPING = True
 # Options: TrainingSampler, RepeatFactorTrainingSampler
 _C.DATALOADER.SAMPLER_TRAIN = "TrainingSampler"
+# for BN computing in Evalution
+_C.DATALOADER.BN_SUBSET_SAMPLER = "SubsetRandomSampler"
+_C.DATALOADER.BN_SUBSET_SIZE = 2000
+_C.DATALOADER.BN_SUBSET_SEED = 2021
+
 # Repeat threshold for RepeatFactorTrainingSampler
 _C.DATALOADER.REPEAT_THRESHOLD = 0.0
 # Tf True, when working on datasets that have instance annotations, the
@@ -130,6 +141,8 @@ _C.MODEL.BACKBONE.NAME = "build_resnet_backbone"
 # stages are each group of residual blocks.
 _C.MODEL.BACKBONE.FREEZE_AT = 2
 
+_C.MODEL.TEACHER_BACKBONE = CN()
+_C.MODEL.TEACHER_BACKBONE.NAME = "build_retinanet_mbv3_fpn_backbone"
 
 # ---------------------------------------------------------------------------- #
 # FPN options
@@ -143,7 +156,8 @@ _C.MODEL.FPN.OUT_CHANNELS = 256
 
 # Options: "" (no norm), "GN"
 _C.MODEL.FPN.NORM = ""
-
+# RELU in last output
+_C.MODEL.FPN.USE_RELU = False
 # Types for fusing the FPN top-down and lateral features. Can be either "sum" or "avg"
 _C.MODEL.FPN.FUSE_TYPE = "sum"
 
@@ -416,7 +430,7 @@ _C.MODEL.RETINANET = CN()
 
 # This is the number of foreground classes.
 _C.MODEL.RETINANET.NUM_CLASSES = 80
-
+_C.MODEL.RETINANET.NUM_CLASSES_WHEN_TASK_DROPOUT = 55
 _C.MODEL.RETINANET.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 
 # Convolutions to use in the cls and bbox tower
@@ -498,6 +512,81 @@ _C.MODEL.RESNETS.DEFORM_MODULATED = False
 # Number of groups in deformable conv.
 _C.MODEL.RESNETS.DEFORM_NUM_GROUPS = 1
 
+# ---------------------------------------------------------------------------- #
+# MobileNetV3
+# ---------------------------------------------------------------------------- #
+_C.MODEL.MOBILENETV3 = CN()
+_C.MODEL.MOBILENETV3.NUM_CLASSES = 80
+# Options: FrozenBN, GN, "SyncBN", "BN"
+_C.MODEL.MOBILENETV3.NORM = "SyncBN"
+_C.MODEL.MOBILENETV3.BN_MOMENTUM = 0.1
+_C.MODEL.MOBILENETV3.BN_EPS = 1e-5
+_C.MODEL.MOBILENETV3.OUT_FEATURES = ["res2", "res4", "res5"]
+
+# ---------------------------------------------------------------------------- #
+# OFA_MobileNetV3
+# ---------------------------------------------------------------------------- #
+_C.MODEL.OFA_MOBILENETV3 = CN()
+_C.MODEL.OFA_MOBILENETV3.train = False
+_C.MODEL.OFA_MOBILENETV3.teacher = ""
+_C.MODEL.OFA_MOBILENETV3.KD_RATIO = [1.0, 1.0] # one for cls, one for box. box设为1没啥问题，cls设为1e-4看看
+_C.MODEL.OFA_MOBILENETV3.DYNAMIC_BATCH_SIZE = 1
+_C.MODEL.OFA_MOBILENETV3.NUM_CLASSES = 80
+_C.MODEL.OFA_MOBILENETV3.NORM = "SyncBN"
+_C.MODEL.OFA_MOBILENETV3.BN_MOMENTUM = 0.1
+_C.MODEL.OFA_MOBILENETV3.BN_EPS = 1e-5
+_C.MODEL.OFA_MOBILENETV3.WIDTH_MULT_LIST = 1.0
+_C.MODEL.OFA_MOBILENETV3.KS_LIST = [3, 5, 7]
+_C.MODEL.OFA_MOBILENETV3.EXPAND_LIST = [3, 4, 6]
+_C.MODEL.OFA_MOBILENETV3.DEPTH_LIST = [2, 3, 4]
+
+# ---------------------------------------------------------------------------- #
+# MP_OFA_MobileNetV3
+# ---------------------------------------------------------------------------- #
+_C.MODEL.MP_OFA_MOBILENETV3 = CN()
+_C.MODEL.MP_OFA_MOBILENETV3.NUM_CLASSES = 80
+_C.MODEL.MP_OFA_MOBILENETV3.NORM = "SyncBN"
+_C.MODEL.MP_OFA_MOBILENETV3.BN_MOMENTUM = 0.1
+_C.MODEL.MP_OFA_MOBILENETV3.BN_EPS = 1e-5
+_C.MODEL.MP_OFA_MOBILENETV3.WIDTH_MULT_LIST = 1.0
+_C.MODEL.MP_OFA_MOBILENETV3.KS_LIST = [3, 5, 7]
+_C.MODEL.MP_OFA_MOBILENETV3.EXPAND_LIST = [3, 4, 6]
+_C.MODEL.MP_OFA_MOBILENETV3.DEPTH_LIST = [2, 3, 4]
+
+# ---------------------------------------------------------------------------- #
+# SP_OFA_MobileNetV3
+# ---------------------------------------------------------------------------- #
+_C.MODEL.SP_OFA_MOBILENETV3 = CN()
+_C.MODEL.SP_OFA_MOBILENETV3.NUM_CLASSES = 80
+_C.MODEL.SP_OFA_MOBILENETV3.NORM = "SyncBN"
+_C.MODEL.SP_OFA_MOBILENETV3.BN_MOMENTUM = 0.1
+_C.MODEL.SP_OFA_MOBILENETV3.BN_EPS = 1e-5
+_C.MODEL.SP_OFA_MOBILENETV3.WIDTH_MULT_LIST = 1.0
+_C.MODEL.SP_OFA_MOBILENETV3.KS_LIST = [3, 5, 7]
+_C.MODEL.SP_OFA_MOBILENETV3.EXPAND_LIST = [3, 4, 6]
+_C.MODEL.SP_OFA_MOBILENETV3.DEPTH_LIST = [2, 3, 4]
+
+# ---------------------------------------------------------------------------- #
+# CONTROLLER, 训练它的时候ofa_mbv3.train必须为false，task dropout ratio=0, model.is_ofa=false
+# model.weights=""，TEST.EVAL_PERIOD=0
+# ---------------------------------------------------------------------------- #
+_C.MODEL.CONTROLLER = CN()
+_C.MODEL.CONTROLLER.NAME = "MP_MobileNetV3Controller" # or SP_
+_C.MODEL.CONTROLLER.TRAIN = False
+_C.MODEL.CONTROLLER.MAX_EPOCHS = 90
+_C.MODEL.CONTROLLER.VAL_NUM = 1100
+_C.MODEL.CONTROLLER.SEED = 2021
+_C.MODEL.CONTROLLER.N_CONDITION = 11
+_C.MODEL.CONTROLLER.CONSTRAINT_LOW = 150
+_C.MODEL.CONTROLLER.CONSTRAINT_HIGH = 550
+_C.MODEL.CONTROLLER.LOSS_LAMBDA = 1e-2
+_C.MODEL.CONTROLLER.LOSS_TYPE = "mse"
+_C.MODEL.CONTROLLER.INITIAL_TAU = 5
+_C.MODEL.CONTROLLER.DECAY_FACTOR = 0.025
+_C.MODEL.CONTROLLER.TEACHER = CN()
+_C.MODEL.CONTROLLER.TEACHER.META_ARCHITECTURE = "RetinaNet"
+_C.MODEL.CONTROLLER.TEACHER.BACKBONE = "build_retinanet_mp_ofa_mbv3_fpn_backbone" # or build_retinanet_sp_ofa_mbv3_fpn_backbone
+_C.MODEL.CONTROLLER.TEACHER.WEIGHT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0.1/model_final.pth"
 
 # ---------------------------------------------------------------------------- #
 # Solver
@@ -569,7 +658,12 @@ _C.SOLVER.CLIP_GRADIENTS.NORM_TYPE = 2.0
 # Note that this does not change model's inference behavior.
 # To use AMP in inference, run inference under autocast()
 _C.SOLVER.AMP = CN({"ENABLED": False})
+# classifier dropout, should be no need since this is for object detection
+_C.SOLVER.DROPOUT = 0.2
 
+_C.SOLVER.CONTROLLER = CN()
+_C.SOLVER.CONTROLLER.BASE_LR = 3e-4
+_C.SOLVER.CONTROLLER.WEIGHT_DECAY = 3e-5
 # ---------------------------------------------------------------------------- #
 # Specific test options
 # ---------------------------------------------------------------------------- #

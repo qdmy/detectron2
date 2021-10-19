@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import contextlib
 import copy
+from enum import EnumMeta
 import io
 import itertools
 import json
@@ -8,7 +9,7 @@ import logging
 import numpy as np
 import os
 import pickle
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import pycocotools.mask as mask_util
 import torch
 from pycocotools.coco import COCO
@@ -46,6 +47,7 @@ class COCOEvaluator(DatasetEvaluator):
         tasks=None,
         distributed=True,
         output_dir=None,
+        print_period=0, train_controller=False,
         *,
         use_fast_impl=True,
         kpt_oks_sigmas=(),
@@ -85,6 +87,9 @@ class COCOEvaluator(DatasetEvaluator):
         self._output_dir = output_dir
         self._use_fast_impl = use_fast_impl
 
+        self.print_period = print_period
+        self.train_controller = train_controller
+
         if tasks is not None and isinstance(tasks, CfgNode):
             kpt_oks_sigmas = (
                 tasks.TEST.KEYPOINT_OKS_SIGMAS if not kpt_oks_sigmas else kpt_oks_sigmas
@@ -98,7 +103,6 @@ class COCOEvaluator(DatasetEvaluator):
             self._tasks = tasks
 
         self._cpu_device = torch.device("cpu")
-
         self._metadata = MetadataCatalog.get(dataset_name)
         if not hasattr(self._metadata, "json_file"):
             self._logger.info(
@@ -112,13 +116,15 @@ class COCOEvaluator(DatasetEvaluator):
 
         json_file = PathManager.get_local_path(self._metadata.json_file)
         with contextlib.redirect_stdout(io.StringIO()):
-            self._coco_api = COCO(json_file)
+            self._coco_api = COCO(json_file, train_controller=self.train_controller)
 
         # Test set json files do not contain annotations (evaluation must be
         # performed using the COCO evaluation server).
         self._do_evaluation = "annotations" in self._coco_api.dataset
         if self._do_evaluation:
             self._kpt_oks_sigmas = kpt_oks_sigmas
+
+        self.task_dropout = True if 'task_dropout' in dataset_name else False
 
     def reset(self):
         self._predictions = []
@@ -143,7 +149,7 @@ class COCOEvaluator(DatasetEvaluator):
             if len(prediction) > 1:
                 self._predictions.append(prediction)
 
-    def evaluate(self, img_ids=None):
+    def evaluate(self, img_ids=None, current_iter=0):
         """
         Args:
             img_ids: a list of image IDs to evaluate on. Default to None for the whole dataset
@@ -172,7 +178,7 @@ class COCOEvaluator(DatasetEvaluator):
         if "proposals" in predictions[0]:
             self._eval_box_proposals(predictions)
         if "instances" in predictions[0]:
-            self._eval_predictions(predictions, img_ids=img_ids)
+            self._eval_predictions(predictions, img_ids=img_ids, current_iter=current_iter)
         # Copy so the caller can do whatever with results
         return copy.deepcopy(self._results)
 
@@ -188,11 +194,17 @@ class COCOEvaluator(DatasetEvaluator):
                 tasks.add("keypoints")
         return sorted(tasks)
 
-    def _eval_predictions(self, predictions, img_ids=None):
+    def _eval_predictions(self, predictions, img_ids=None, current_iter=0):
         """
         Evaluate predictions. Fill self._results with the metrics of the tasks.
         """
-        self._logger.info("Preparing results for COCO format ...")
+        self.print_current_info = True
+        if self.train_controller:
+            if current_iter % self.print_period != 0: # 不满足打印周期，不输出controller的测试信息
+                self.print_current_info = False
+
+        if not self.train_controller:
+            self._logger.info("Preparing results for COCO format ...")
         coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
         tasks = self._tasks or self._tasks_from_predictions(coco_results)
 
@@ -213,7 +225,7 @@ class COCOEvaluator(DatasetEvaluator):
                 )
                 result["category_id"] = reverse_id_mapping[category_id]
 
-        if self._output_dir:
+        if self._output_dir and not self.train_controller:
             file_path = os.path.join(self._output_dir, "coco_instances_results.json")
             self._logger.info("Saving results to {}".format(file_path))
             with PathManager.open(file_path, "w") as f:
@@ -224,11 +236,13 @@ class COCOEvaluator(DatasetEvaluator):
             self._logger.info("Annotations are not available for evaluation.")
             return
 
-        self._logger.info(
-            "Evaluating predictions with {} COCO API...".format(
-                "unofficial" if self._use_fast_impl else "official"
+        if not self.train_controller:
+            self._logger.info(
+                "Evaluating predictions with {} COCO API...".format(
+                    "unofficial" if self._use_fast_impl else "official"
+                )
             )
-        )
+
         for task in sorted(tasks):
             assert task in {"bbox", "segm", "keypoints"}, f"Got unknown task: {task}!"
             coco_eval = (
@@ -239,13 +253,21 @@ class COCOEvaluator(DatasetEvaluator):
                     kpt_oks_sigmas=self._kpt_oks_sigmas,
                     use_fast_impl=self._use_fast_impl,
                     img_ids=img_ids,
+                    task_dropout=self.task_dropout,
+                    superclass_idx=list(self._metadata.class_to_superclass_idx.keys()) if self.task_dropout else None,
+                    train_controller=self.train_controller,
                 )
                 if len(coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
 
+            # 把class_names提前处理一下，只保留superclass包含的
+            if self.task_dropout:
+                class_names = [self._metadata.get("thing_classes")[i] for i in list(self._metadata.class_to_superclass_idx.keys())]
+            else:
+                class_names = self._metadata.get("thing_classes")
             res = self._derive_coco_results(
-                coco_eval, task, class_names=self._metadata.get("thing_classes")
+                coco_eval, task, class_names=class_names
             )
             self._results[task] = res
 
@@ -317,9 +339,10 @@ class COCOEvaluator(DatasetEvaluator):
             metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
             for idx, metric in enumerate(metrics)
         }
-        self._logger.info(
-            "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
-        )
+        if not self.train_controller:
+            self._logger.info(
+                "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
+            )
         if not np.isfinite(sum(results.values())):
             self._logger.info("Some metrics cannot be computed and is shown as NaN.")
 
@@ -351,9 +374,53 @@ class COCOEvaluator(DatasetEvaluator):
             headers=["category", "AP"] * (N_COLS // 2),
             numalign="left",
         )
-        self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
+        if not self.train_controller:
+            self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
 
         results.update({"AP-" + name: ap for name, ap in results_per_category})
+
+        if self.task_dropout:
+            # calculate super_category results
+            class_idx_to_superclass_idx = self._metadata.class_to_superclass_idx # 里面保存的是每个类对应的superclass idx
+            label_map = self._metadata.label_map # 保存superclass每一类的idx对应的superclass name
+            
+            # 把55个超类从0-79的class idx映射到0-54的连续值
+            class_idx_in80_to_in55 = {}
+            for i, (class_idx_in80, superclass_idx) in enumerate(class_idx_to_superclass_idx.items()):
+                class_idx_in80_to_in55[class_idx_in80] = i
+
+            superclass_name_to_all_child_idx = defaultdict(list)
+            for class_idx_in80, superclass_idx in class_idx_to_superclass_idx.items(): # class_idx是连续的，并且需要是超类总数类别范围内的值，即0-54
+                superclass_name = label_map[superclass_idx]
+                class_idx_in55 = class_idx_in80_to_in55[class_idx_in80]
+                superclass_name_to_all_child_idx[superclass_name].append(class_idx_in55)
+            ######################################### OFA ############################
+            # 计算每个超类的平均ap
+            results_per_supercategory = []
+            for parent_name, all_child in superclass_name_to_all_child_idx.items():
+                # area range index 0: all area ranges
+                # max dets index -1: typically 100 per image
+                precision = precisions[:, :, all_child, 0, -1]
+                precision = precision[precision > -1]
+                ap = np.mean(precision) if precision.size else float("nan")
+                results_per_supercategory.append(("{}".format(parent_name), float(ap * 100)))
+
+            # tabulate superclass
+            SUPER_N_COLS = min(6, len(results_per_supercategory) * 2)
+            super_results_flatten = list(itertools.chain(*results_per_supercategory))
+            super_results_2d = itertools.zip_longest(*[super_results_flatten[i::SUPER_N_COLS] for i in range(SUPER_N_COLS)])
+            super_table = tabulate(
+                super_results_2d,
+                tablefmt="pipe",
+                floatfmt=".3f",
+                headers=["super_category", "AP"] * (SUPER_N_COLS // 2),
+                numalign="left",
+            )
+            if not self.train_controller:
+                self._logger.info("Per-super_category {} AP: \n".format(iou_type) + super_table)
+
+            results.update({"AP-" + name: ap for name, ap in results_per_supercategory})
+
         return results
 
 
@@ -533,7 +600,7 @@ def _evaluate_box_proposals(dataset_predictions, coco_api, thresholds=None, area
 
 
 def _evaluate_predictions_on_coco(
-    coco_gt, coco_results, iou_type, kpt_oks_sigmas=None, use_fast_impl=True, img_ids=None
+    coco_gt, coco_results, iou_type, kpt_oks_sigmas=None, use_fast_impl=True, img_ids=None, task_dropout=False, superclass_idx=None, train_controller=False
 ):
     """
     Evaluate the coco results using COCOEval API.
@@ -550,7 +617,7 @@ def _evaluate_predictions_on_coco(
             c.pop("bbox", None)
 
     coco_dt = coco_gt.loadRes(coco_results)
-    coco_eval = (COCOeval_opt if use_fast_impl else COCOeval)(coco_gt, coco_dt, iou_type)
+    coco_eval = (COCOeval_opt if use_fast_impl else COCOeval)(coco_gt, coco_dt, iou_type, train_controller=train_controller)
     if img_ids is not None:
         coco_eval.params.imgIds = img_ids
 
@@ -574,6 +641,16 @@ def _evaluate_predictions_on_coco(
 
     coco_eval.evaluate()
     coco_eval.accumulate()
+
+    # accumulate之后，就得到了eval的结果，然后如果task dropout，则需要选出只55类的结果，再去summarize
+    if task_dropout:
+        assert superclass_idx is not None, "when task dropout, need to filter out a subset result"
+        coco_eval.eval['counts'][2] = len(superclass_idx)
+        # dimension of precision: [TxRxKxAxM]
+        coco_eval.eval['precision'] = coco_eval.eval['precision'][:,:,superclass_idx,:,:]
+        # dimension of recall: [TxKxAxM]
+        coco_eval.eval['recall'] = coco_eval.eval['recall'][:,superclass_idx,:,:]
+        coco_eval.eval['scores'] = coco_eval.eval['scores'][:,:,superclass_idx,:,:]
     coco_eval.summarize()
 
     return coco_eval

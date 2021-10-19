@@ -3,11 +3,12 @@ from abc import ABCMeta, abstractmethod
 import torch.nn as nn
 
 from detectron2.layers import ShapeSpec
+from codebase.third_party.spos_ofa.ofa.utils import *
 
 __all__ = ["Backbone"]
 
 
-class Backbone(nn.Module, metaclass=ABCMeta):
+class Backbone(MyNetwork, metaclass=ABCMeta):
     """
     Abstract base class for network backbones.
     """

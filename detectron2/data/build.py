@@ -19,7 +19,8 @@ from .catalog import DatasetCatalog, MetadataCatalog
 from .common import AspectRatioGroupedDataset, DatasetFromList, MapDataset
 from .dataset_mapper import DatasetMapper
 from .detection_utils import check_metadata_consistency
-from .samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
+from .samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler, InferenceSampler_controller
+from torch.utils.data.sampler import SubsetRandomSampler
 
 """
 This file contains the default logic to build a dataloader for training or testing.
@@ -154,7 +155,7 @@ def load_proposals_into_dataset(dataset_dicts, proposal_file):
     return dataset_dicts
 
 
-def print_instances_class_histogram(dataset_dicts, class_names):
+def print_instances_class_histogram(dataset_dicts, class_names, superclass_name=""):
     """
     Args:
         dataset_dicts (list[dict]): list of dataset dicts.
@@ -183,9 +184,16 @@ def print_instances_class_histogram(dataset_dicts, class_names):
             return x[:11] + ".."
         return x
 
-    data = list(
-        itertools.chain(*[[short_name(class_names[i]), int(v)] for i, v in enumerate(histogram)])
-    )
+    if superclass_name == "":
+        data = list(
+            itertools.chain(*[[short_name(class_names[i]), int(v)] for i, v in enumerate(histogram)])
+        )
+    else: # 只打印当前superclass的数据统计
+        data = list(
+            itertools.chain(*[[short_name(class_names[i]), int(v)] for i, v in enumerate(histogram) if v > 0])
+        )
+        N_COLS = len(data)
+        num_classes = N_COLS
     total_num_instances = sum(data[1::2])
     data.extend([None] * (N_COLS - (len(data) % N_COLS)))
     if num_classes > 1:
@@ -200,13 +208,13 @@ def print_instances_class_histogram(dataset_dicts, class_names):
     )
     log_first_n(
         logging.INFO,
-        "Distribution of instances among all {} categories:\n".format(num_classes)
+        "Distribution of instances among all {} categories{}:\n".format(num_classes, " for {}".format(superclass_name) if superclass_name != "" else superclass_name)
         + colored(table, "cyan"),
         key="message",
     )
 
 
-def get_detection_dataset_dicts(names, filter_empty=True, min_keypoints=0, proposal_files=None):
+def get_detection_dataset_dicts(names, filter_empty=True, min_keypoints=0, proposal_files=None, task_dropout=False, train_controller=False):
     """
     Load and prepare dataset dicts for instance detection/segmentation and semantic segmentation.
 
@@ -224,9 +232,22 @@ def get_detection_dataset_dicts(names, filter_empty=True, min_keypoints=0, propo
     if isinstance(names, str):
         names = [names]
     assert len(names), names
-    dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in names]
+    assert len(names) == 1, 'only support one dataset at a time'
+
+    temp_dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in names]
+    if task_dropout:
+        dataset_dicts = [temp_dataset_dicts[0][0]] # dataset_dicts have to be a list for subsequent code
+        class_ranges = temp_dataset_dicts[0][1]
+        meta = temp_dataset_dicts[0][2]
+        in_hier = temp_dataset_dicts[0][3]
+    else:
+        dataset_dicts = temp_dataset_dicts
+        
     for dataset_name, dicts in zip(names, dataset_dicts):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
+        if train_controller:
+            assert sum([len(ds) for ds in dicts]), "Dataset '{}' is empty!".format(dataset_name)
+        else:
+            assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
 
     if proposal_files is not None:
         assert len(names) == len(proposal_files)
@@ -236,28 +257,55 @@ def get_detection_dataset_dicts(names, filter_empty=True, min_keypoints=0, propo
             for dataset_i_dicts, proposal_file in zip(dataset_dicts, proposal_files)
         ]
 
-    dataset_dicts = list(itertools.chain.from_iterable(dataset_dicts))
+    if train_controller:
+        dataset_dicts_per_superclass = []
+        for i, one_superclass_dict in enumerate(dataset_dicts[0]):
+            superclass_name = meta.label_map[i]
+            one_superclass_dict = list(itertools.chain.from_iterable([one_superclass_dict]))
 
-    has_instances = "annotations" in dataset_dicts[0]
-    if filter_empty and has_instances:
-        dataset_dicts = filter_images_with_only_crowd_annotations(dataset_dicts)
-    if min_keypoints > 0 and has_instances:
-        dataset_dicts = filter_images_with_few_keypoints(dataset_dicts, min_keypoints)
+            has_instances = "annotations" in one_superclass_dict[0]
+            if filter_empty and has_instances:
+                one_superclass_dict = filter_images_with_only_crowd_annotations(one_superclass_dict)
+            if min_keypoints > 0 and has_instances:
+                one_superclass_dict = filter_images_with_few_keypoints(one_superclass_dict, min_keypoints)
 
-    if has_instances:
-        try:
-            class_names = MetadataCatalog.get(names[0]).thing_classes
-            check_metadata_consistency("thing_classes", names)
-            print_instances_class_histogram(dataset_dicts, class_names)
-        except AttributeError:  # class names are not available for this dataset
-            pass
+            if has_instances:
+                try:
+                    class_names = MetadataCatalog.get(names[0]).thing_classes
+                    check_metadata_consistency("thing_classes", names)
+                    print_instances_class_histogram(one_superclass_dict, class_names, superclass_name=superclass_name)
+                except AttributeError:  # class names are not available for this dataset
+                    pass
+            assert len(one_superclass_dict), "No valid data found in {}.".format(",".join(names))
 
-    assert len(dataset_dicts), "No valid data found in {}.".format(",".join(names))
-    return dataset_dicts
+            dataset_dicts_per_superclass.append(one_superclass_dict)
+        dataset_dicts = dataset_dicts_per_superclass
+    else:
+        dataset_dicts = list(itertools.chain.from_iterable(dataset_dicts))
+
+        has_instances = "annotations" in dataset_dicts[0]
+        if filter_empty and has_instances:
+            dataset_dicts = filter_images_with_only_crowd_annotations(dataset_dicts)
+        if min_keypoints > 0 and has_instances:
+            dataset_dicts = filter_images_with_few_keypoints(dataset_dicts, min_keypoints)
+
+        if has_instances:
+            try:
+                class_names = MetadataCatalog.get(names[0]).thing_classes
+                check_metadata_consistency("thing_classes", names)
+                print_instances_class_histogram(dataset_dicts, class_names)
+            except AttributeError:  # class names are not available for this dataset
+                pass
+
+        assert len(dataset_dicts), "No valid data found in {}.".format(",".join(names))
+
+    if task_dropout:
+        return dataset_dicts, class_ranges, meta, in_hier
+    return dataset_dicts, None, None, None
 
 
 def build_batch_data_loader(
-    dataset, sampler, total_batch_size, *, aspect_ratio_grouping=False, num_workers=0
+    dataset, sampler, total_batch_size, *, aspect_ratio_grouping=False, num_workers=0, task_dropout=False,
 ):
     """
     Build a batched dataloader. The main differences from `torch.utils.data.DataLoader` are:
@@ -291,7 +339,7 @@ def build_batch_data_loader(
             collate_fn=operator.itemgetter(0),  # don't batch, but yield individual elements
             worker_init_fn=worker_init_reset_seed,
         )  # yield individual mapped dict
-        return AspectRatioGroupedDataset(data_loader, batch_size)
+        return AspectRatioGroupedDataset(data_loader, batch_size, task_dropout=task_dropout)
     else:
         batch_sampler = torch.utils.data.sampler.BatchSampler(
             sampler, batch_size, drop_last=True
@@ -306,17 +354,26 @@ def build_batch_data_loader(
 
 
 def _train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
+    dataset_names = list(cfg.DATASETS.TRAIN)
+    assert len(dataset_names)==1, 'only support one single dataset at a time'
+    if 'task_dropout' in dataset_names[0]:
+        task_dropout = True
+    else:
+        task_dropout = False
     if dataset is None:
-        dataset = get_detection_dataset_dicts(
+        dataset, class_ranges, meta, in_hier = get_detection_dataset_dicts(
             cfg.DATASETS.TRAIN,
             filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
             min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
             if cfg.MODEL.KEYPOINT_ON
             else 0,
             proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
+            task_dropout=task_dropout
         )
         _log_api_usage("dataset." + cfg.DATASETS.TRAIN[0])
-
+    # 控制load多少数据，比如debug的时候指定一下，就不用每次都全load了
+    if cfg.DATASETS.STOP_LOAD > 0:
+        dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)]
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
 
@@ -341,13 +398,17 @@ def _train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
         "total_batch_size": cfg.SOLVER.IMS_PER_BATCH,
         "aspect_ratio_grouping": cfg.DATALOADER.ASPECT_RATIO_GROUPING,
         "num_workers": cfg.DATALOADER.NUM_WORKERS,
+        "class_ranges": class_ranges,
+        "meta": meta,
+        "in_hier": in_hier,
+        "task_dropout": task_dropout
     }
 
 
 # TODO can allow dataset as an iterable or IterableDataset to make this function more general
 @configurable(from_config=_train_loader_from_config)
 def build_detection_train_loader(
-    dataset, *, mapper, sampler=None, total_batch_size, aspect_ratio_grouping=True, num_workers=0
+    dataset, *, mapper, sampler=None, total_batch_size, aspect_ratio_grouping=True, num_workers=0, class_ranges=None, meta=None, in_hier=None, task_dropout=False
 ):
     """
     Build a dataloader for object detection with some default features.
@@ -377,9 +438,9 @@ def build_detection_train_loader(
             by the ``mapper``.
     """
     if isinstance(dataset, list):
-        dataset = DatasetFromList(dataset, copy=False)
+        dataset = DatasetFromList(dataset, class_ranges, meta, in_hier, task_dropout, copy=False)
     if mapper is not None:
-        dataset = MapDataset(dataset, mapper)
+        dataset = MapDataset(dataset, mapper, task_dropout=task_dropout)
     if sampler is None:
         sampler = TrainingSampler(len(dataset))
     assert isinstance(sampler, torch.utils.data.sampler.Sampler)
@@ -389,30 +450,157 @@ def build_detection_train_loader(
         total_batch_size,
         aspect_ratio_grouping=aspect_ratio_grouping,
         num_workers=num_workers,
+        task_dropout=task_dropout,
     )
 
 
-def _test_loader_from_config(cfg, dataset_name, mapper=None):
+def _bn_subset_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
+    dataset_names = list(cfg.DATASETS.TRAIN)
+    assert len(dataset_names)==1, 'only support one single dataset at a time'
+    if 'task_dropout' in dataset_names[0]:
+        task_dropout = True
+    else:
+        task_dropout = False
+    if dataset is None:
+        dataset, class_ranges, meta, in_hier = get_detection_dataset_dicts(
+            cfg.DATASETS.TRAIN,
+            filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
+            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
+            if cfg.MODEL.KEYPOINT_ON
+            else 0,
+            proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
+            task_dropout=task_dropout
+        )
+        _log_api_usage("dataset." + cfg.DATASETS.TRAIN[0])
+    # 控制load多少数据，比如debug的时候指定一下，就不用每次都全load了
+    if cfg.DATASETS.STOP_LOAD > 0:
+        dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)]
+    if mapper is None:
+        mapper = DatasetMapper(cfg, True)
+
+    return {
+        "dataset": dataset,
+        "cfg": cfg,
+        "mapper": mapper,
+        "total_batch_size": cfg.SOLVER.IMS_PER_BATCH,
+        "num_workers": cfg.DATALOADER.NUM_WORKERS,
+        "class_ranges": class_ranges,
+        "meta": meta,
+        "in_hier": in_hier,
+        "task_dropout": task_dropout
+    }
+
+@configurable(from_config=_bn_subset_loader_from_config)
+def build_detection_bn_subset_loader(
+    dataset, *, mapper, cfg, total_batch_size, aspect_ratio_grouping=True, num_workers=0, class_ranges=None, meta=None, in_hier=None, task_dropout=False
+):
+    """
+    Build a dataloader for object detection with some default features.
+    This interface is experimental.
+
+    Args:
+        dataset (list or torch.utils.data.Dataset): a list of dataset dicts,
+            or a map-style pytorch dataset. They can be obtained by using
+            :func:`DatasetCatalog.get` or :func:`get_detection_dataset_dicts`.
+        mapper (callable): a callable which takes a sample (dict) from dataset and
+            returns the format to be consumed by the model.
+            When using cfg, the default choice is ``DatasetMapper(cfg, is_train=True)``.
+        sampler (torch.utils.data.sampler.Sampler or None): a sampler that produces
+            indices to be applied on ``dataset``. Default to :class:`TrainingSampler`,
+            which coordinates an infinite random shuffle sequence across all workers.
+        total_batch_size (int): total batch size across all workers. Batching
+            simply puts data into a list.
+        aspect_ratio_grouping (bool): whether to group images with similar
+            aspect ratio for efficiency. When enabled, it requires each
+            element in dataset be a dict with keys "width" and "height".
+        num_workers (int): number of parallel data loading workers
+
+    Returns:
+        torch.utils.data.DataLoader:
+            a dataloader. Each output from it is a ``list[mapped_element]`` of length
+            ``total_batch_size / num_workers``, where ``mapped_element`` is produced
+            by the ``mapper``.
+    """
+    if isinstance(dataset, list):
+        dataset = DatasetFromList(dataset, class_ranges, meta, in_hier, task_dropout, copy=False)
+    dataset.superclass_masks = torch.tensor(dataset.superclass_masks).cuda()
+    sampler_name = cfg.DATALOADER.BN_SUBSET_SAMPLER
+    logger = logging.getLogger(__name__)
+    logger.info("Using bn subset sampler {}".format(sampler_name))
+    n_samples = len(dataset)
+    g = torch.Generator()
+    g.manual_seed(cfg.DATALOADER.BN_SUBSET_SEED)
+    rand_indexes = torch.randperm(n_samples, generator=g).tolist()
+    chosen_indexes = rand_indexes[:cfg.DATALOADER.BN_SUBSET_SIZE]
+    if sampler_name == "SubsetRandomSampler":
+        sampler = SubsetRandomSampler(chosen_indexes)
+    else:
+        raise ValueError("Unknown bn subset sampler: {}".format(sampler_name))
+
+    assert isinstance(sampler, torch.utils.data.sampler.Sampler)
+
+    if mapper is not None:
+        dataset = MapDataset(dataset, mapper, task_dropout=task_dropout)
+
+    return build_batch_data_loader(
+        dataset,
+        sampler,
+        total_batch_size,
+        aspect_ratio_grouping=aspect_ratio_grouping,
+        num_workers=num_workers,
+        task_dropout=task_dropout,
+    )
+
+
+def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False, train_controller=False):
     """
     Uses the given `dataset_name` argument (instead of the names in cfg), because the
     standard practice is to evaluate each test set individually (not combining them).
     """
-    dataset = get_detection_dataset_dicts(
-        [dataset_name],
+    if isinstance(dataset_name, str):
+        dataset_name = [dataset_name]
+
+    assert len(dataset_name)==1, 'only support one single test dataset at a time'
+    dataset, class_ranges, meta, in_hier = get_detection_dataset_dicts(
+        dataset_name,
         filter_empty=False,
         proposal_files=[
             cfg.DATASETS.PROPOSAL_FILES_TEST[list(cfg.DATASETS.TEST).index(dataset_name)]
         ]
         if cfg.MODEL.LOAD_PROPOSALS
         else None,
+        task_dropout=task_dropout,
+        train_controller=train_controller,
     )
+    # 控制load多少数据，比如debug的时候指定一下，就不用每次都全load了
+    if train_controller:
+        assert len(dataset)==meta.superclass_num
+        assert isinstance(dataset, list)
+        if cfg.DATASETS.STOP_LOAD > meta.superclass_num:
+            super_d_position = cfg.DATASETS.STOP_LOAD//meta.superclass_num + 1
+            dataset = [super_d[:super_d_position] for super_d in dataset]
+
+        # 把整个数据集放到一个list里
+        whole_dataset = []
+        for super_d in dataset:
+            whole_dataset.extend(super_d)
+    else:
+        if cfg.DATASETS.STOP_LOAD > 0:
+            dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)]
+        whole_dataset = None
     if mapper is None:
-        mapper = DatasetMapper(cfg, False)
-    return {"dataset": dataset, "mapper": mapper, "num_workers": cfg.DATALOADER.NUM_WORKERS}
+        mapper = DatasetMapper(cfg, False, task_dropout=task_dropout)
+    return {"dataset": dataset, "mapper": mapper, "num_workers": cfg.DATALOADER.NUM_WORKERS, 
+            "class_ranges": class_ranges, "meta": meta, "in_hier": in_hier, 
+            "task_dropout": task_dropout, "train_controller": train_controller,
+            "val_num_for_controller": cfg.MODEL.CONTROLLER.VAL_NUM, 
+            "seed_for_controller": cfg.MODEL.CONTROLLER.SEED,
+            "whole_dataset": whole_dataset}
 
 
 @configurable(from_config=_test_loader_from_config)
-def build_detection_test_loader(dataset, *, mapper, sampler=None, num_workers=0):
+def build_detection_test_loader(dataset, *, mapper, sampler=None, num_workers=0, class_ranges=None, \
+    meta=None, in_hier=None, task_dropout=False, train_controller=False, val_num_for_controller=0, seed_for_controller=2021, whole_dataset=None):
     """
     Similar to `build_detection_train_loader`, but uses a batch size of 1,
     and :class:`InferenceSampler`. This sampler coordinates all workers to
@@ -445,21 +633,45 @@ def build_detection_test_loader(dataset, *, mapper, sampler=None, num_workers=0)
         data_loader = build_detection_test_loader(cfg, "my_test")
     """
     if isinstance(dataset, list):
-        dataset = DatasetFromList(dataset, copy=False)
+        dataset = DatasetFromList(dataset, class_ranges, meta, in_hier, task_dropout, copy=False, \
+            train_controller=train_controller, whole_dataset=whole_dataset)
+    if train_controller:
+        superclass_val_indices = split_train_val(dataset, val_num=val_num_for_controller, seed=seed_for_controller) # 这个函数之后，每个超类就load相同的图片数量
+        # TODO: 是不是应该每个超类load相同的object数量，但这个要怎么写啊。。。
+    else:
+        superclass_val_indices = None
     if mapper is not None:
-        dataset = MapDataset(dataset, mapper)
+        dataset = MapDataset(dataset, mapper, task_dropout=task_dropout, train_controller=train_controller, subperclass_indices=superclass_val_indices)
     if sampler is None:
-        sampler = InferenceSampler(len(dataset))
+        if train_controller: # 按照graphnas代码，不用sampler
+            if mapper is not None:
+                sampler = InferenceSampler_controller([len(dset) for dset in dataset._dataset._lst])
+            else:
+                sampler = InferenceSampler_controller([len(dset) for dset in dataset._lst])
+        else:
+            sampler = InferenceSampler(len(dataset))
     # Always use 1 image per worker during inference since this is the
     # standard when reporting inference time in papers.
-    batch_sampler = torch.utils.data.sampler.BatchSampler(sampler, 1, drop_last=False)
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
-        num_workers=num_workers,
-        batch_sampler=batch_sampler,
-        collate_fn=trivial_batch_collator,
-    )
-    return data_loader
+
+    if train_controller:
+        data_loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            # pin_memory=True,
+            num_workers=num_workers,
+            collate_fn=trivial_batch_collator,
+        )
+        return data_loader, meta, class_ranges
+    else:
+        batch_sampler = torch.utils.data.sampler.BatchSampler(sampler, 1, drop_last=False)
+        data_loader = torch.utils.data.DataLoader(
+            dataset,
+            num_workers=num_workers,
+            batch_sampler=batch_sampler,
+            collate_fn=trivial_batch_collator,
+        )
+        return data_loader, meta
 
 
 def trivial_batch_collator(batch):
@@ -472,3 +684,26 @@ def trivial_batch_collator(batch):
 def worker_init_reset_seed(worker_id):
     initial_seed = torch.initial_seed() % 2 ** 31
     seed_all_rng(initial_seed + worker_id)
+
+
+def split_train_val(dataset, val_num, seed):
+    superclass_val_indices = []
+    superclass_val_num = int(val_num / len(dataset.superclass_samples_indices)) # 每个超类load多少个图片
+    superclass_samples_indices = dataset.superclass_samples_indices
+    if superclass_val_num > max([len(idxes) for idxes in superclass_samples_indices]):
+        superclass_val_num = min([len(idxes) for idxes in superclass_samples_indices])
+    for sample_indices in superclass_samples_indices:
+        num_samples = len(sample_indices)
+
+        val_ratio = float(superclass_val_num) / num_samples
+        split_ratio = 1 - val_ratio if val_ratio < 1 else 0
+        split = int(np.floor(split_ratio * num_samples))
+
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+        permutation = torch.randperm(num_samples, generator=generator).numpy()
+
+        superclass_indices = list(range(num_samples))
+        superclass_val_indices.append(np.array(superclass_indices)[permutation[split:num_samples]].tolist())
+
+    return superclass_val_indices

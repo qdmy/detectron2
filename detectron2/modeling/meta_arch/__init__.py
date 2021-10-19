@@ -9,6 +9,8 @@ from .panoptic_fpn import PanopticFPN
 from .rcnn import GeneralizedRCNN, ProposalNetwork
 from .retinanet import RetinaNet
 from .semantic_seg import SEM_SEG_HEADS_REGISTRY, SemanticSegmentor, build_sem_seg_head
+from codebase.controller.mp_mobilenetv3_controller import MP_MobileNetV3Controller
+from codebase.controller.sp_mobilenetv3_controller import SP_MobileNetV3Controller
 
 
 __all__ = list(globals().keys())

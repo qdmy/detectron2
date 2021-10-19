@@ -1,0 +1,15 @@
+_BASE_: "../Base-RetinaNet.yaml"
+MODEL:
+  TASK_DROPOUT_RATE: 0.0
+  WEIGHTS: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/weights/ofa/ofa_MobileNetV3_D4_E6_K7"
+  BACKBONE:
+    NAME: "build_retinanet_mbv3_fpn_backbone"
+    FREEZE_AT: 0
+  FPN:
+    IN_FEATURES: ["res2", "res4", "res5"]
+DATASETS:
+  TRAIN: ("coco_2017_train_50",)
+  TEST: ("coco_2017_val_50",)
+  # TRAIN: ("coco_2017_train_task_dropout_50",)
+  # TEST: ("coco_2017_val_task_dropout_50",)
+OUTPUT_DIR: output/coco-detection/retinanet_MBV3_FPN_1x-debug

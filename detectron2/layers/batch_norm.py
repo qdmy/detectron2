@@ -10,7 +10,6 @@ from detectron2.utils import comm, env
 
 from .wrappers import BatchNorm2d
 
-
 class FrozenBatchNorm2d(nn.Module):
     """
     BatchNorm2d where the batch statistics and the affine parameters are fixed.
@@ -188,7 +187,6 @@ def get_norm(norm, out_channels):
             return actv
         else:
             return nn.Sequential(norm(out_channels), actv)
-
 
 
 class NaiveSyncBatchNorm(BatchNorm2d):

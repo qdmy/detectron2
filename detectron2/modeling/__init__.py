@@ -4,7 +4,7 @@ from detectron2.layers import ShapeSpec
 from .anchor_generator import build_anchor_generator, ANCHOR_GENERATOR_REGISTRY
 from .backbone import (
     BACKBONE_REGISTRY,
-    FPN,
+    # FPN,
     Backbone,
     ResNet,
     ResNetBlockBase,
@@ -19,10 +19,13 @@ from .meta_arch import (
     PanopticFPN,
     ProposalNetwork,
     RetinaNet,
+    MP_MobileNetV3Controller,
+    SP_MobileNetV3Controller,
     SemanticSegmentor,
     build_model,
     build_sem_seg_head,
 )
+
 from .postprocessing import detector_postprocess
 from .proposal_generator import (
     PROPOSAL_GENERATOR_REGISTRY,

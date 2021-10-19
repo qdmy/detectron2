@@ -198,3 +198,40 @@ class InferenceSampler(Sampler):
 
     def __len__(self):
         return len(self._local_indices)
+
+
+class InferenceSampler_controller(Sampler):
+    """
+    Produce indices for inference across all workers.
+    Inference needs to run on the __exact__ set of samples,
+    therefore when the total number of samples is not divisible by the number of workers,
+    this sampler produces different number of samples on different workers.
+    """
+
+    def __init__(self, size: list):
+        """
+        Args:
+            size (int): the total number of data of the underlying dataset to sample from
+        """
+        self.superclass_id = 0
+        self._local_indices_per_superclass = []
+        for superclass_size in size:
+            _size = superclass_size
+            assert _size > 0
+            _rank = comm.get_rank()
+            _world_size = comm.get_world_size()
+
+            shard_size = (_size - 1) // _world_size + 1
+            begin = shard_size * _rank
+            end = min(shard_size * (_rank + 1), _size)
+            _local_indices = range(begin, end)
+            self._local_indices_per_superclass.append(_local_indices)
+
+    def __iter__(self):
+        yield from self._local_indices_per_superclass[self.superclass_id]
+
+    def __len__(self):
+        return len(self._local_indices_per_superclass[self.superclass_id])
+    
+    def set_superclass_id(self, superclass_index: int):
+        self.superclass_id = superclass_index

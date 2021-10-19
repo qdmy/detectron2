@@ -6,12 +6,18 @@ import torch.nn.functional as F
 from torch import nn
 
 from detectron2.layers import Conv2d, ShapeSpec, get_norm, EltWiseModule
+from third_party.quantization.policy import deploy_on_epoch
 
 from .backbone import Backbone
 from .build import BACKBONE_REGISTRY
 from .resnet import build_resnet_backbone
-
-__all__ = ["build_resnet_fpn_backbone", "build_retinanet_resnet_fpn_backbone", "FPN"]
+from codebase.third_party.spos_ofa.ofa.imagenet_classification.networks.mobilenet_v3 import build_mbv3_backbone
+from codebase.third_party.spos_ofa.ofa.imagenet_classification.elastic_nn.networks.ofa_mbv3 import build_ofa_mbv3_backbone
+from codebase.third_party.spos_ofa.ofa.imagenet_classification.elastic_nn.networks.mp_mbv3 import build_mp_ofa_mbv3_backbone
+from codebase.third_party.spos_ofa.ofa.imagenet_classification.elastic_nn.networks.sp_mbv3 import build_sp_ofa_mbv3_backbone
+# from memory_profiler import profile
+__all__ = ["build_resnet_fpn_backbone", "build_retinanet_resnet_fpn_backbone", "build_retinanet_mbv3_fpn_backbone",\
+     "build_retinanet_ofa_mbv3_fpn_backbone", "build_retinanet_mp_ofa_mbv3_fpn_backbone", "build_retinanet_sp_ofa_mbv3_fpn_backbone", "FPN"]
 
 
 class FPN(Backbone):
@@ -24,7 +30,7 @@ class FPN(Backbone):
 
     def __init__(
         self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum",
-             activation=False, include_in_features=False,
+             activation=False, include_in_features=False, train_controller=False,
     ):
         """
         Args:
@@ -52,7 +58,7 @@ class FPN(Backbone):
         super(FPN, self).__init__()
         assert isinstance(bottom_up, Backbone)
         assert in_features, in_features
-
+        self.train_controller = train_controller
         self.include_in_features = include_in_features
 
         # Feature map strides and channels from the bottom up network (e.g. ResNet)
@@ -118,8 +124,8 @@ class FPN(Backbone):
     @property
     def size_divisibility(self):
         return self._size_divisibility
-
-    def forward(self, x):
+    # @profile
+    def forward(self, x, depths=None, ratios=None, kernel_sizes=None):
         """
         Args:
             input (dict[str->Tensor]): mapping feature map name (e.g., "res5") to
@@ -132,7 +138,10 @@ class FPN(Backbone):
                 paper convention: "p<stage>", where stage has stride = 2 ** stage e.g.,
                 ["p2", "p3", ..., "p6"].
         """
-        bottom_up_features = self.bottom_up(x)
+        if self.train_controller:
+            bottom_up_features = self.bottom_up(x, depths, ratios, kernel_sizes)
+        else:
+            bottom_up_features = self.bottom_up(x)
         results = []
         prev_features = self.lateral_convs[0](bottom_up_features[self.in_features[-1]])
         results.append(self.output_convs[0](prev_features))
@@ -286,5 +295,109 @@ def build_retinanet_resnet_fpn_backbone(cfg, input_shape: ShapeSpec):
         activation=activation,
         top_block=LastLevelP6P7(in_channels_p6p7, out_channels, norm=norm, activation=activation),
         fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+    )
+    return backbone
+
+
+@BACKBONE_REGISTRY.register()
+def build_retinanet_mbv3_fpn_backbone(cfg, input_shape: ShapeSpec):
+    """
+    Args:
+        cfg: a detectron2 CfgNode
+
+    Returns:
+        backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
+    """
+    bottom_up = build_mbv3_backbone(cfg, input_shape)
+    in_features = cfg.MODEL.FPN.IN_FEATURES
+    out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    activation = cfg.MODEL.FPN.USE_RELU
+    in_channels_p6p7 = bottom_up.output_shape()["res5"].channels
+    backbone = FPN(
+        bottom_up=bottom_up,
+        in_features=in_features,
+        out_channels=out_channels,
+        norm=cfg.MODEL.FPN.NORM,
+        activation=activation,
+        top_block=LastLevelP6P7(in_channels_p6p7, out_channels, in_feature="res5"),
+        fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+    )
+    return backbone
+
+
+@BACKBONE_REGISTRY.register()
+def build_retinanet_ofa_mbv3_fpn_backbone(cfg, input_shape: ShapeSpec):
+    """
+    Args:
+        cfg: a detectron2 CfgNode
+
+    Returns:
+        backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
+    """
+    bottom_up = build_ofa_mbv3_backbone(cfg, input_shape)
+    in_features = cfg.MODEL.FPN.IN_FEATURES
+    out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    activation = cfg.MODEL.FPN.USE_RELU
+    in_channels_p6p7 = bottom_up.output_shape()["res5"].channels
+    backbone = FPN(
+        bottom_up=bottom_up,
+        in_features=in_features,
+        out_channels=out_channels,
+        norm=cfg.MODEL.FPN.NORM,
+        activation=activation,
+        top_block=LastLevelP6P7(in_channels_p6p7, out_channels, in_feature="res5"),
+        fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+    )
+    return backbone
+
+@BACKBONE_REGISTRY.register()
+def build_retinanet_mp_ofa_mbv3_fpn_backbone(cfg, input_shape: ShapeSpec):
+    """
+    Args:
+        cfg: a detectron2 CfgNode
+
+    Returns:
+        backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
+    """
+    bottom_up = build_mp_ofa_mbv3_backbone(cfg, input_shape)
+    in_features = cfg.MODEL.FPN.IN_FEATURES
+    out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    activation = cfg.MODEL.FPN.USE_RELU
+    in_channels_p6p7 = bottom_up.output_shape()["res5"].channels
+    backbone = FPN(
+        bottom_up=bottom_up,
+        in_features=in_features,
+        out_channels=out_channels,
+        norm=cfg.MODEL.FPN.NORM,
+        activation=activation,
+        top_block=LastLevelP6P7(in_channels_p6p7, out_channels, in_feature="res5"),
+        fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+        train_controller=True,
+    )
+    return backbone
+
+@BACKBONE_REGISTRY.register()
+def build_retinanet_sp_ofa_mbv3_fpn_backbone(cfg, input_shape: ShapeSpec):
+    """
+    Args:
+        cfg: a detectron2 CfgNode
+
+    Returns:
+        backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
+    """
+    bottom_up = build_sp_ofa_mbv3_backbone(cfg, input_shape)
+    in_features = cfg.MODEL.FPN.IN_FEATURES
+    out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    activation = cfg.MODEL.FPN.USE_RELU
+    in_channels_p6p7 = bottom_up.output_shape()["res5"].channels
+    backbone = FPN(
+        bottom_up=bottom_up,
+        in_features=in_features,
+        out_channels=out_channels,
+        norm=cfg.MODEL.FPN.NORM,
+        activation=activation,
+        top_block=LastLevelP6P7(in_channels_p6p7, out_channels, in_feature="res5"),
+        fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+        train_controller=True,
     )
     return backbone

@@ -12,7 +12,6 @@ from detectron2.utils.file_io import PathManager
 
 from .c2_model_loading import align_and_update_state_dicts
 
-
 class DetectionCheckpointer(Checkpointer):
     """
     Same as :class:`Checkpointer`, but is able to:
@@ -20,7 +19,7 @@ class DetectionCheckpointer(Checkpointer):
     2. correctly load checkpoints that are only available on the master worker
     """
 
-    def __init__(self, model, save_dir="", *, save_to_disk=None, **checkpointables):
+    def __init__(self, model, save_dir="", is_ofa=True, resume=False, trainer=None, *, save_to_disk=None, **checkpointables):
         is_main_process = comm.is_main_process()
         none_list = []
         for k, v in checkpointables.items():
@@ -35,6 +34,9 @@ class DetectionCheckpointer(Checkpointer):
             **checkpointables,
         )
         self.path_manager = PathManager
+        self.is_ofa = is_ofa
+        self.resume = resume
+        self.trainer = trainer
 
     def load(self, path, *args, **kwargs):
         need_sync = False
@@ -56,6 +58,8 @@ class DetectionCheckpointer(Checkpointer):
                 need_sync = True
             if not has_file:
                 path = None  # don't load if not readable
+        if not self.is_ofa:
+            self.logger.info("[Checkpointer] now is Loading teacher model")
         ret = super().load(path, *args, **kwargs)
 
         if need_sync:
@@ -94,11 +98,50 @@ class DetectionCheckpointer(Checkpointer):
             return {"model": model_state, "__author__": "pycls", "matching_heuristics": True}
 
         loaded = super()._load_file(filename)  # load native pth checkpoint
+        if 'iteration' in loaded:
+            iteration = loaded['iteration']
+        if 'state_dict' in loaded:
+            loaded = loaded['state_dict']
+        if 'model' in loaded:
+            loaded = loaded['model']
+        if 'MobileNetV3' in filename:
+            # 修改key值以对应本代码里的state_dict
+            loaded_with_correct_key = {}
+            for k, v in loaded.items():
+                k = 'backbone.bottom_up.' + k
+                if 'first_conv.' in k:
+                    new_k = k.replace('first_conv.', 'first_conv.0.')
+                    loaded_with_correct_key[new_k] = v
+                if 'mobile_inverted_conv.' in k:
+                    new_k = k.replace('mobile_inverted_conv.', 'conv.')
+                    loaded_with_correct_key[new_k] = v
+            loaded = loaded_with_correct_key
+        
+        # ofaMbv3里的conv和bn都变成了conv.conv和bn.bn
+        if self.is_ofa and not self.resume:
+            loaded_with_correct_key_for_OFA = {}
+            for k, v in loaded.items():
+                # replace conv to conv.conv, bn to bn.bn
+                if 'blocks' in k and 'blocks.0' not in k and 'se' not in k:
+                    temp = k.split('.')
+                    temp.insert(6, temp[6])
+                    new_k = '.'.join(temp)
+                else:
+                    new_k = k
+                loaded_with_correct_key_for_OFA[new_k] = v
+            loaded = loaded_with_correct_key_for_OFA
+
         if "model" not in loaded:
             if 'state_dict' in loaded:
                 loaded = {"model": loaded['state_dict']}
             else:
                 loaded = {"model": loaded}
+
+        # 增加下面的代码才能在resume的时候，紧接着最新ckpt的iter数继续下去，现在的代码好像有问题
+        if self.resume and self.trainer is not None:
+            self.trainer.iter = iteration
+            self.logger.info("last running stop iteration: {}".format(self.trainer.iter))
+
         return loaded
 
     def _load_model(self, checkpoint):

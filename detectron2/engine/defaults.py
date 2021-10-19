@@ -16,11 +16,13 @@ import sys
 import weakref
 from collections import OrderedDict
 from typing import Optional
+from numpy import isin
 import torch
 from fvcore.nn.precise_bn import get_bn_modules
 from omegaconf import OmegaConf
 from torch.nn.parallel import DistributedDataParallel
-
+import numpy as np
+from codebase.support import dataset
 import detectron2.data.transforms as T
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import CfgNode, LazyConfig
@@ -28,17 +30,20 @@ from detectron2.data import (
     MetadataCatalog,
     build_detection_test_loader,
     build_detection_train_loader,
+    build_detection_bn_subset_loader,
 )
 from detectron2.evaluation import (
     DatasetEvaluator,
     inference_on_dataset,
+    controller_inference_one_iter,
     print_csv_format,
     verify_results,
 )
+from detectron2.evaluation.coco_evaluation import _evaluate_box_proposals
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
 from detectron2.utils import comm
-from detectron2.utils.collect_env import collect_env_info
+from detectron2.utils.collect_env import collect_env_info, detect_compute_compatibility
 from detectron2.utils.env import seed_all_rng
 from detectron2.utils.events import CommonMetricPrinter, JSONWriter, TensorboardXWriter
 from detectron2.utils.file_io import PathManager
@@ -46,6 +51,11 @@ from detectron2.utils.logger import setup_logger
 
 from . import hooks
 from .train_loop import AMPTrainer, SimpleTrainer, TrainerBase
+from codebase.torchutils.metrics import AccuracyMetric, SuperclassAccuracyMetric
+from codebase.third_party.spos_ofa.ofa.utils import list_mean
+from codebase.engine.train_mp_controller import compute_tau
+
+# TORCH_DISTRIBUTED_DEBUG = DETAIL
 
 __all__ = [
     "create_ddp_model",
@@ -56,8 +66,20 @@ __all__ = [
     "DefaultTrainer",
 ]
 
+def sort_channels(model):
+    if hasattr(model, "module"):
+        model_without_module = model.module
+    else:
+        model_without_module = model
 
-def create_ddp_model(model, *, fp16_compression=False, **kwargs):
+    expand_stage_list = model_without_module.backbone.bottom_up.expand_ratio_list.copy()
+    expand_stage_list.sort(reverse=True)
+    n_stages = len(expand_stage_list) - 1
+    current_stage = n_stages - 1
+    model_without_module.backbone.bottom_up.re_organize_middle_weights(expand_ratio_stage=current_stage)
+    return model
+
+def create_ddp_model(model, find_unused_parameters=False, *, fp16_compression=False, **kwargs):
     """
     Create a DistributedDataParallel model if there are >1 processes.
 
@@ -71,7 +93,7 @@ def create_ddp_model(model, *, fp16_compression=False, **kwargs):
         return model
     if "device_ids" not in kwargs:
         kwargs["device_ids"] = [comm.get_local_rank()]
-    ddp = DistributedDataParallel(model, **kwargs)
+    ddp = DistributedDataParallel(model, find_unused_parameters=find_unused_parameters, **kwargs)
     if fp16_compression:
         from torch.distributed.algorithms.ddp_comm_hooks import default as comm_hooks
 
@@ -172,6 +194,82 @@ def _highlight(code, filename):
     code = pygments.highlight(code, lexer, Terminal256Formatter(style="monokai"))
     return code
 
+def print_acc_info(logger, box_clss, targetss, output_logitss, super_targetss, n_superclass, index_to_superclass_name, only_total_acc=False):
+    (
+        acc1_subnets,
+        acc5_subnets,
+        masked_total_acc1_subnets,
+        masked_total_acc5_subnets,
+        total_acc1_subnets,
+        total_acc5_subnets
+    ) = ([], [], [], [], [], [])
+    if isinstance(box_clss, dict):
+        assert list(box_clss.keys())==list(targetss.keys())==list(output_logitss.keys())==list(super_targetss.keys())
+        test_subnet_name = list(box_clss.keys())
+        for i, subnet in enumerate(test_subnet_name):
+            acc1, acc5, masked_total_acc1, masked_total_acc5, total_acc1, total_acc5\
+                = print_one_net_acc_info(logger, box_clss[subnet], targetss[subnet], output_logitss[subnet], super_targetss[subnet], n_superclass, subnet, index_to_superclass_name)
+            acc1_subnets.append(acc1)
+            acc5_subnets.append(acc5)
+            masked_total_acc1_subnets.append(masked_total_acc1)
+            masked_total_acc5_subnets.append(masked_total_acc5)
+            total_acc1_subnets.append(total_acc1)
+            total_acc5_subnets.append(total_acc5)
+
+        test_subnet_avg_masked_acc1 = list_mean(masked_total_acc1_subnets)
+        test_subnet_avg_masked_acc5 = list_mean(masked_total_acc5_subnets)
+        test_subnet_avg_acc1 = list_mean(total_acc1_subnets)
+        test_subnet_avg_acc5 = list_mean(total_acc5_subnets)
+        logger.info("Subnet Avg masked_acc1: {}, masked_acc5: {}".format(test_subnet_avg_masked_acc1, test_subnet_avg_masked_acc5))
+        logger.info("Subnet Avg acc1: {}, acc5: {}".format(test_subnet_avg_acc1, test_subnet_avg_acc5))
+    else:
+        print_one_net_acc_info(logger, box_clss, targetss, output_logitss, super_targetss, n_superclass, \
+            index_to_superclass_name=index_to_superclass_name, only_total_acc=only_total_acc)
+
+def print_one_net_acc_info(logger, box_cls, targets, output_logits, super_targets, n_superclass, subnet_name=None, index_to_superclass_name=None, only_total_acc=False):
+    if subnet_name is None:
+        subnet_name = 'teacher'
+    if not only_total_acc:
+        logger.info("Acc info of {}".format(subnet_name))
+    total_accuracy_metric = AccuracyMetric(topk=(1, 5))
+    masked_total_accuracy_metric = AccuracyMetric(topk=(1, 5))
+    superclass_accuracy_metric = SuperclassAccuracyMetric(topk=(1, 5), n_superclass=n_superclass)
+    for i, (cls, t, logit, super_t) in enumerate(zip(box_cls, targets, output_logits, super_targets)):
+        total_accuracy_metric.update(cls, t)
+        masked_total_accuracy_metric.update(logit, t)
+        superclass_accuracy_metric.update(logit, t, super_t)
+
+    if only_total_acc:
+        logger.info("total_top1: {}   total_top5: {}".format(total_accuracy_metric.at(1).rate, total_accuracy_metric.at(5).rate))
+        return
+
+    logger.info("total_acc1: {}, total_acc5: {}".format(total_accuracy_metric.at(1).rate, total_accuracy_metric.at(5).rate))
+    logger.info("masked_total_acc1: {}, masked_total_acc5: {}".format(masked_total_accuracy_metric.at(1).rate, masked_total_accuracy_metric.at(5).rate))
+    # 打印superclass
+    superclass_top1_acc1 = superclass_accuracy_metric.at(1)
+    superclass_top5_acc5 = superclass_accuracy_metric.at(5)
+    for superclass_idx in range(len(superclass_top1_acc1)):
+        logger.info(
+            ", ".join(
+                [
+                    f"superclass={superclass_idx}-{index_to_superclass_name[superclass_idx]}",
+                    f"acc1={superclass_top1_acc1[superclass_idx].rate * 100:.2f}%",
+                    f"acc5={superclass_top5_acc5[superclass_idx].rate * 100:.2f}%",
+                ]
+            )
+        )
+    subclass_acc_str = [f"{acc.rate * 100:.2f}%" for superclass_idx, acc in enumerate(superclass_top1_acc1)]
+    subclass_acc_str = ",".join(subclass_acc_str)
+    subclass_acc_str = "Acc: " + subclass_acc_str
+    logger.info(subclass_acc_str)
+    logger.info('{}{} done{}'.format('-'*10, subnet_name, '-'*10))
+
+    return superclass_accuracy_metric.at(1),\
+        superclass_accuracy_metric.at(5),\
+        masked_total_accuracy_metric.at(1).rate,\
+        masked_total_accuracy_metric.at(5).rate,\
+        total_accuracy_metric.at(1).rate,\
+        total_accuracy_metric.at(5).rate
 
 def default_setup(cfg, args):
     """
@@ -362,7 +460,7 @@ class DefaultTrainer(TrainerBase):
         cfg (CfgNode):
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, resume=False):
         """
         Args:
             cfg (CfgNode):
@@ -372,27 +470,101 @@ class DefaultTrainer(TrainerBase):
         if not logger.isEnabledFor(logging.INFO):  # setup_logger is not called for d2
             setup_logger()
         cfg = DefaultTrainer.auto_scale_workers(cfg, comm.get_world_size())
+        self.cfg = cfg
+        self.train_controller = cfg.MODEL.CONTROLLER.TRAIN
+        if self.train_controller:
+            assert not cfg.MODEL.OFA_MOBILENETV3.train, "when train controller, cannot set ofa train"
+            assert cfg.MODEL.TASK_DROPOUT_RATE == 0.0, "when train controller, task dropout not conduct"
+            assert not cfg.MODEL.IS_OFA, "when train controlelr, of course not OFA"
+            assert cfg.MODEL.WEIGHTS == "", "when train controller, no pretrained model" # controller没有pretrained model去load
+            assert cfg.TEST.EVAL_PERIOD == 1, "when train controller, each iter tests on the training data" # training过程中不eval，controller也没法eval
+            # TODO: 需要assert的可能还有别的
+            dataset_names = list(cfg.DATASETS.TEST)
+            self.evaluator = self.build_evaluator(cfg, dataset_names[0])
+            self.multi_path_mbv3 = 'MP' in cfg.MODEL.CONTROLLER.NAME
+            if not self.multi_path_mbv3:
+                assert 'SP' in cfg.MODEL.CONTROLLER.NAME, "must be one of MP or SP controller, not {}".format(cfg.MODEL.CONTROLLER.NAME)
+
+            self.loss_lambda = cfg.MODEL.CONTROLLER.LOSS_LAMBDA
+            self.loss_type = cfg.MODEL.CONTROLLER.LOSS_TYPE
+
+        else:
+            dataset_names = list(cfg.DATASETS.TRAIN)
+            self.multi_path_mbv3 =False
+            self.loss_lambda = 0
+            self.loss_type = ""
+
+        assert len(dataset_names)==1, 'only support one single training dataset at a time'
+        self.task_dropout = True if 'task_dropout' in dataset_names[0] or 'task_dropout' in list(cfg.DATASETS.TEST)[0] or self.train_controller else False
 
         # Assume these objects must be constructed in this order.
-        model = self.build_model(cfg)
-        optimizer = self.build_optimizer(cfg, model)
-        data_loader = self.build_train_loader(cfg)
+        # 如果是训练controller，那么model就是controller，teacher_model则是mp_ofa_mbv3或者sp_ofa_mbv3
+        # 当训练controller时，optimizer，之类的，都跟graphnas代码里的一致
+        # model, optimizer, scheduler, etc，都要根据controller来对应创建
+        model, teacher_model = self.build_model(cfg, train_controller=self.train_controller)
+        optimizer = self.build_optimizer(cfg, model, train_controller=self.train_controller)
 
-        model = create_ddp_model(model, broadcast_buffers=False)
+        # TODO: 还有train的流程，怎么在其中穿插进去teacher model的eval，如何计算loss，都是要改的
+
+        if self.train_controller:
+            data_loader, meta, class_ranges = self.build_test_loader(cfg, dataset_names[0], self.task_dropout, train_controller=self.train_controller)
+            num_superclass = len(class_ranges)
+            num_class_per_superclass = len(class_ranges[0])
+
+            logger.info(f"Num superclass: {num_superclass}")
+            logger.info(f"Num class per superclass: {num_class_per_superclass}")
+
+            teacher_pretrained = cfg.MODEL.CONTROLLER.TEACHER.WEIGHT
+
+            # 把data loader处理一下，按照graphnas
+            self.input_data = []
+            for superclass_id in range(num_superclass):
+                superclass_data = []
+                data_loader.dataset.set_superclass_id(superclass_id)
+                for data in data_loader:
+                    inputs, super_targets_idxs, super_targets = np.array(data, dtype=object).T
+                    superclass_data.append((inputs, super_targets_idxs, super_targets))
+                self.input_data.append(superclass_data)
+            # 算出每个epoch有多少step
+            self.superclass_loader_len = len(self.input_data[0])
+            self.num_steps_per_epoch = num_superclass * self.superclass_loader_len # 即原本的loader_len
+            self.recompute_tau_and_permutation(epoch=0) # 初始化tau和permutation
+            self.meta = meta
+        else:
+            data_loader = self.build_train_loader(cfg)
+            teacher_pretrained = cfg.MODEL.OFA_MOBILENETV3.teacher
+            num_class_per_superclass = 0
+
+        model = create_ddp_model(model, broadcast_buffers=False, find_unused_parameters=cfg.MODEL.IS_OFA)
+        if teacher_model is not None:
+            if not self.train_controller:
+                model = sort_channels(model)
+            teacher_model = create_ddp_model(teacher_model, broadcast_buffers=False, find_unused_parameters=True)
+            DetectionCheckpointer(teacher_model, is_ofa=False).resume_or_load(teacher_pretrained) # 这里就load了teacher model
         self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
-            model, data_loader, optimizer
+            model, data_loader, optimizer, task_dropout=self.task_dropout, 
+            teacher_model=teacher_model, kd_ratio=cfg.MODEL.OFA_MOBILENETV3.KD_RATIO,
+            num_sampled_subset=cfg.MODEL.OFA_MOBILENETV3.DYNAMIC_BATCH_SIZE,
+            train_controller=self.train_controller, num_class_per_superclass=num_class_per_superclass,
+            multi_path_mbv3=self.multi_path_mbv3, loss_lambda=self.loss_lambda, 
         )
 
-        self.scheduler = self.build_lr_scheduler(cfg, optimizer)
+        self.scheduler = self.build_lr_scheduler(cfg, optimizer, train_controller=self.train_controller)
+
         self.checkpointer = DetectionCheckpointer(
             # Assume you want to save checkpoints together with logs/statistics
             model,
             cfg.OUTPUT_DIR,
+            is_ofa=cfg.MODEL.IS_OFA,
+            resume=resume,
             trainer=weakref.proxy(self),
         )
         self.start_iter = 0
-        self.max_iter = cfg.SOLVER.MAX_ITER
-        self.cfg = cfg
+        if self.train_controller:
+            self.max_iter = self.num_steps_per_epoch * cfg.MODEL.CONTROLLER.MAX_EPOCHS # 训controller的时候，每个iter就是一个epoch，每个epoch多少个iter是由数据集长度决定的
+            # assert self.max_iter % self.num_steps_per_epoch == 0, "total iters should be times of loader_len"
+        else:
+            self.max_iter = cfg.SOLVER.MAX_ITER
 
         self.register_hooks(self.build_hooks())
 
@@ -432,8 +604,8 @@ class DefaultTrainer(TrainerBase):
 
         ret = [
             hooks.IterationTimer(),
-            hooks.LRScheduler(),
-            hooks.PreciseBN(
+            hooks.LRScheduler() if not self.train_controller else None,
+            hooks.PreciseBN( # 这里实现的是训练时计算准确BN的功能，但是graphnas里是要在测试时去做
                 # Run at the same freq as (but before) evaluation.
                 cfg.TEST.EVAL_PERIOD,
                 self.model,
@@ -441,7 +613,7 @@ class DefaultTrainer(TrainerBase):
                 self.build_train_loader(cfg),
                 cfg.TEST.PRECISE_BN.NUM_ITER,
             )
-            if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model)
+            if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model) # 在训练前就构建了，所以里面的BN都是train模式的
             else None,
         ]
 
@@ -452,8 +624,20 @@ class DefaultTrainer(TrainerBase):
         if comm.is_main_process():
             ret.append(hooks.PeriodicCheckpointer(self.checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD))
 
-        def test_and_save_results():
-            self._last_eval_results = self.test(self.cfg, self.model)
+        def test_and_save_results(): # 训练controller的时候，就用这个函数来算每个生成结构的性能
+            if self.train_controller:
+                if self.iter % cfg.SOLVER.PRINT_PERIOD == 0 or self.iter_in_epoch == 0:
+                    print_time = True
+                else:
+                    print_time = False
+                if self.iter_in_epoch == 0:
+                    dataset_name = list(cfg.DATASETS.TEST)[0]
+                    self.evaluator = self.build_evaluator(cfg, dataset_name, print_period=cfg.SOLVER.PRINT_PERIOD, train_controller=self.train_controller)
+                self._last_eval_results = self.test_controller(self.cfg, self.teacher_model, self.meta, self.data_for_this_iter, \
+                    self.iter_in_epoch, self.iter, self.epoch, self.evaluator, depths=self._trainer.depth_for_controller, \
+                        ratios=self._trainer.ratio_for_controller, kernel_sizes=self._trainer.kernel_size_for_controller, print_=print_time)
+            else:
+                self._last_eval_results = self.test(self.cfg, self.model)
             return self._last_eval_results
 
         # Do evaluation after checkpointer, because then if it fails,
@@ -494,12 +678,27 @@ class DefaultTrainer(TrainerBase):
             verify_results(self.cfg, self._last_eval_results)
             return self._last_eval_results
 
+    def recompute_tau_and_permutation(self, epoch):
+        self.tau = compute_tau(self.cfg.MODEL.CONTROLLER.INITIAL_TAU, self.cfg.MODEL.CONTROLLER.DECAY_FACTOR, epoch)
+        self.permutation = torch.randperm(self.num_steps_per_epoch)
+
     def run_step(self):
         self._trainer.iter = self.iter
-        self._trainer.run_step()
+        if self.train_controller:
+            # 这个tau是每个epoch重新算一次
+            if self.iter % self.num_steps_per_epoch == 0:
+                self.recompute_tau_and_permutation(epoch=self.iter//self.num_steps_per_epoch)
+            self.epoch = self.iter // self.num_steps_per_epoch
+            self.iter_in_epoch = self.iter % self.num_steps_per_epoch
+            superclass_id = int(self.permutation[self.iter_in_epoch] / self.superclass_loader_len) # 有了这两个值，就能得到对应当前iter的batch data
+            data_idx = int(self.permutation[self.iter_in_epoch] % self.superclass_loader_len)
+            self.data_for_this_iter = self.input_data[superclass_id][data_idx] # 要把这个数据给test_controller,让它只在这个data上test
+            self._trainer.run_step_controller(tau=self.tau, loss_type=self.loss_type, data=self.data_for_this_iter, superclass_id=superclass_id)
+        else:
+            self._trainer.run_step()
 
     @classmethod
-    def build_model(cls, cfg):
+    def build_model(cls, cfg, train_controller=False):
         """
         Returns:
             torch.nn.Module:
@@ -507,13 +706,19 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`detectron2.modeling.build_model`.
         Overwrite it if you'd like a different model.
         """
-        model = build_model(cfg)
+        model, teacher_model = build_model(cfg, train_controller=train_controller)
         logger = logging.getLogger(__name__)
-        logger.info("Model:\n{}".format(model))
-        return model
+        actual_teacher_name = ""
+        actual_model_name = ""
+        if train_controller:
+            actual_teacher_name = " (is mp/sp_ofa_mbv3)"
+            actual_model_name = " (is controller)"
+        logger.info("teacher Model{}:\n{}".format(actual_teacher_name, teacher_model))
+        logger.info("Model{}:\n{}".format(actual_model_name, model))
+        return model, teacher_model
 
     @classmethod
-    def build_optimizer(cls, cfg, model):
+    def build_optimizer(cls, cfg, model, train_controller=False):
         """
         Returns:
             torch.optim.Optimizer:
@@ -521,15 +726,15 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`detectron2.solver.build_optimizer`.
         Overwrite it if you'd like a different optimizer.
         """
-        return build_optimizer(cfg, model)
+        return build_optimizer(cfg, model, train_controller=train_controller)
 
     @classmethod
-    def build_lr_scheduler(cls, cfg, optimizer):
+    def build_lr_scheduler(cls, cfg, optimizer, train_controller=False):
         """
         It now calls :func:`detectron2.solver.build_lr_scheduler`.
         Overwrite it if you'd like a different scheduler.
         """
-        return build_lr_scheduler(cfg, optimizer)
+        return build_lr_scheduler(cfg, optimizer, train_controller=train_controller)
 
     @classmethod
     def build_train_loader(cls, cfg):
@@ -543,7 +748,14 @@ class DefaultTrainer(TrainerBase):
         return build_detection_train_loader(cfg)
 
     @classmethod
-    def build_test_loader(cls, cfg, dataset_name):
+    def build_bn_subset_loader(cls, cfg):
+        """
+        this function is for create a subset for BN when eval.
+        """
+        return build_detection_bn_subset_loader(cfg)
+
+    @classmethod
+    def build_test_loader(cls, cfg, dataset_name, task_dropout=False, train_controller=False):
         """
         Returns:
             iterable
@@ -551,7 +763,7 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`detectron2.data.build_detection_test_loader`.
         Overwrite it if you'd like a different data loader.
         """
-        return build_detection_test_loader(cfg, dataset_name)
+        return build_detection_test_loader(cfg, dataset_name, task_dropout=task_dropout, train_controller=train_controller)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name):
@@ -592,7 +804,18 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
 
         results = OrderedDict()
         for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
-            data_loader = cls.build_test_loader(cfg, dataset_name)
+            if 'task_dropout' in dataset_name:
+                task_dropout = True
+            else:
+                task_dropout = False
+            data_loader, meta = cls.build_test_loader(cfg, dataset_name, task_dropout=task_dropout)
+            if cfg.MODEL.OFA_MOBILENETV3.train: # 训controller的时候这个是false的
+                bn_subset_loader = cls.build_bn_subset_loader(cfg)
+            else:
+                bn_subset_loader = None
+
+            if task_dropout:
+                index_to_superclass_name = meta.label_map
             # When evaluators are passed in as arguments,
             # implicitly assume that evaluators can be created before data_loader.
             if evaluators is not None:
@@ -607,7 +830,16 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     )
                     results[dataset_name] = {}
                     continue
-            results_i = inference_on_dataset(model, data_loader, evaluator)
+
+            if not task_dropout:
+                results_i = inference_on_dataset(model, data_loader, evaluator, task_dropout=task_dropout, bn_subset_loader=bn_subset_loader)
+            else:
+                results_i, box_clss, targetss, output_logitss, super_targetss = inference_on_dataset(model, data_loader, evaluator, task_dropout=task_dropout, bn_subset_loader=bn_subset_loader)
+                if isinstance(box_clss, dict):
+                    logger.info("get results from each subnets")
+                elif isinstance(box_clss, list):
+                    logger.info("get results from teacher model")
+
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(
@@ -616,11 +848,88 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     results_i
                 )
                 logger.info("Evaluation results for {} in csv format:".format(dataset_name))
-                print_csv_format(results_i)
+                if bn_subset_loader is not None:
+                    for k, v in results_i.items():
+                        logger.info("Evaluation results of {}:".format(k))
+                        print_csv_format(v)
+                else:
+                    print_csv_format(results_i)
+            if task_dropout:
+                print_acc_info(logger, box_clss, targetss, output_logitss, super_targetss, n_superclass=cfg.DATASETS.SUPERCLASS_NUM, index_to_superclass_name=index_to_superclass_name)
 
+            # 下面这个打印太傻了，最好能像graphnas那样直接inference结束就打印
+            # if isinstance(model, DistributedDataParallel):
+            #     model = model.module
+            # if task_dropout:
+            #     # 打印acc
+            #     logger.info("total_accuracy_top1: {}, total_accuracy_top5: {}".format(model.total_accuracy_metric.at(1).rate, model.total_accuracy_metric.at(5).rate))
+            #     logger.info("masked_total_accuracy_top1: {}, masked_total_accuracy_top5: {}".format(model.masked_total_accuracy_metric.at(1).rate, model.masked_total_accuracy_metric.at(5).rate))
+            #     # 打印superclass
+            #     superclass_top1_acc1 = model.superclass_accuracy_metric.at(1)
+            #     superclass_top5_acc5 = model.superclass_accuracy_metric.at(5)
+            #     for superclass_idx in range(len(superclass_top1_acc1)):
+            #         logger.info(
+            #             ", ".join(
+            #                 [
+            #                     f"superclass={superclass_idx}-{index_to_superclass_name[superclass_idx]}",
+            #                     f"top1-accuracy={superclass_top1_acc1[superclass_idx].rate * 100:.2f}%",
+            #                     f"top5-accuracy={superclass_top5_acc5[superclass_idx].rate * 100:.2f}%",
+            #                 ]
+            #             )
+            #         )
+
+            #     subclass_acc_str = [f"{acc.rate * 100:.2f}%" for superclass_idx, acc in enumerate(superclass_top1_acc1)]
+            #     subclass_acc_str = ",".join(subclass_acc_str)
+            #     subclass_acc_str = "Acc: " + subclass_acc_str
+            #     logger.info(subclass_acc_str)
+                
         if len(results) == 1:
             results = list(results.values())[0]
         return results
+
+    @classmethod
+    def test_controller(cls, cfg, model, meta, iter_data, iter_in_epoch, iteration, epoch, evaluators=None, depths=None, ratios=None, kernel_sizes=None, print_=False):
+        """
+        Args:
+            cfg (CfgNode):
+            model (nn.Module):
+            evaluators (list[DatasetEvaluator] or None): if None, will call
+                :meth:`build_evaluator`. Otherwise, must have the same length as
+                ``cfg.DATASETS.TEST``.
+
+        Returns:
+            dict: a dict of result metrics
+        """
+        logger = logging.getLogger(__name__)
+        results = OrderedDict()
+        dataset_name = list(cfg.DATASETS.TEST)[0]
+        index_to_superclass_name = meta.label_map
+        # When evaluators are passed in as arguments,
+        # implicitly assume that evaluators can be created before data_loader.
+
+        results_i, box_clss, targetss, output_logitss, super_targetss \
+            = controller_inference_one_iter(logger, model, iter_data, iter_in_epoch, iteration, epoch, print_, evaluators, depths=depths, ratios=ratios, kernel_sizes=kernel_sizes)
+
+        results[dataset_name] = results_i
+        if comm.is_main_process():
+            assert isinstance(
+                results_i, dict
+            ), "Evaluator must return a dict on the main process. Got {} instead.".format(
+                results_i
+            )
+            if print_:
+                mAP = print_csv_format(results_i, only_mAP=True)
+                logger.info("mAP: {}".format(mAP))
+        if print_:
+            print_acc_info(logger, box_clss, targetss, output_logitss, super_targetss, n_superclass=cfg.DATASETS.SUPERCLASS_NUM, \
+                index_to_superclass_name=index_to_superclass_name, only_total_acc=True)
+            
+
+        
+        if len(results) == 1:
+            results = list(results.values())[0]
+        return results
+
 
     @staticmethod
     def auto_scale_workers(cfg, num_workers: int):
@@ -695,7 +1004,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
 
 
 # Access basic attributes from the underlying trainer
-for _attr in ["model", "data_loader", "optimizer"]:
+for _attr in ["model", "teacher_model", "data_loader", "optimizer"]:
     setattr(
         DefaultTrainer,
         _attr,

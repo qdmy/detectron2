@@ -145,10 +145,11 @@ class Metadata(types.SimpleNamespace):
         # Ensure that metadata of the same name stays consistent
         try:
             oldval = getattr(self, key)
-            assert oldval == val, (
-                "Attribute '{}' in the metadata of '{}' cannot be set "
-                "to a different value!\n{} != {}".format(key, self.name, oldval, val)
-            )
+            # 本来是想把这个硬编码成只有55类，但是inference的时候改不动，因为它依赖于官方的COCO_api，那个里面得到的一定是80类，所以还是把这个错误注释吧
+            # assert oldval == val, (
+            #     "Attribute '{}' in the metadata of '{}' cannot be set "
+            #     "to a different value!\n{} != {}".format(key, self.name, oldval, val)
+            # )
         except AttributeError:
             super().__setattr__(key, val)
 

@@ -1,0 +1,13 @@
+_BASE_: "../Base-RetinaNet.yaml"
+MODEL:
+  WEIGHTS: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/weights/ofa/ofa_MobileNetV3_D4_E6_K7"
+  BACKBONE:
+    NAME: "build_retinanet_mbv3_fpn_backbone"
+    FREEZE_AT: 10 # correspond to freeze at 2 in resnet
+  FPN:
+    IN_FEATURES: ["res2", "res4", "res5"]
+    USE_RELU: True
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_2017_val_task_dropout",)
+OUTPUT_DIR: output/coco-detection/retinanet_MBV3Large_FPN_1x

@@ -47,6 +47,7 @@ class DatasetMapper:
         keypoint_hflip_indices: Optional[np.ndarray] = None,
         precomputed_proposal_topk: Optional[int] = None,
         recompute_boxes: bool = False,
+        task_dropout: bool = False,
     ):
         """
         NOTE: this interface is experimental.
@@ -77,13 +78,14 @@ class DatasetMapper:
         self.keypoint_hflip_indices = keypoint_hflip_indices
         self.proposal_topk          = precomputed_proposal_topk
         self.recompute_boxes        = recompute_boxes
+        self.task_dropout = task_dropout
         # fmt: on
         logger = logging.getLogger(__name__)
         mode = "training" if is_train else "inference"
         logger.info(f"[DatasetMapper] Augmentations used in {mode}: {augmentations}")
 
     @classmethod
-    def from_config(cls, cfg, is_train: bool = True):
+    def from_config(cls, cfg, is_train: bool = True, task_dropout: bool =False):
         augs = utils.build_augmentation(cfg, is_train)
         if cfg.INPUT.CROP.ENABLED and is_train:
             augs.insert(0, T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
@@ -99,6 +101,7 @@ class DatasetMapper:
             "instance_mask_format": cfg.INPUT.MASK_FORMAT,
             "use_keypoint": cfg.MODEL.KEYPOINT_ON,
             "recompute_boxes": recompute_boxes,
+            "task_dropout": task_dropout,
         }
 
         if cfg.MODEL.KEYPOINT_ON:
@@ -111,6 +114,35 @@ class DatasetMapper:
                 else cfg.DATASETS.PRECOMPUTED_PROPOSAL_TOPK_TEST
             )
         return ret
+
+    def _transform_annotations(self, dataset_dict, transforms, image_shape):
+        # USER: Modify this if you want to keep them for some reason.
+        for anno in dataset_dict["annotations"]:
+            if not self.use_instance_mask:
+                anno.pop("segmentation", None)
+            if not self.use_keypoint:
+                anno.pop("keypoints", None)
+
+        # USER: Implement additional transformations if you have other types of data
+        annos = [
+            utils.transform_instance_annotations(
+                obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
+            )
+            for obj in dataset_dict.pop("annotations")
+            if obj.get("iscrowd", 0) == 0
+        ]
+        instances = utils.annotations_to_instances(
+            annos, image_shape, mask_format=self.instance_mask_format
+        )
+
+        # After transforms such as cropping are applied, the bounding box may no longer
+        # tightly bound the object. As an example, imagine a triangle object
+        # [(0,0), (2,0), (0,2)] cropped by a box [(1,0),(2,2)] (XYXY format). The tight
+        # bounding box of the cropped triangle should be [(1,0),(2,1)], which is not equal to
+        # the intersection of original bounding box and the cropping box.
+        if self.recompute_boxes:
+            instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
+        dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
     def __call__(self, dataset_dict):
         """
@@ -152,36 +184,14 @@ class DatasetMapper:
 
         if not self.is_train:
             # USER: Modify this if you want to keep them for some reason.
-            dataset_dict.pop("annotations", None)
+            if not self.task_dropout:
+                dataset_dict.pop("annotations", None)
             dataset_dict.pop("sem_seg_file_name", None)
+            if self.task_dropout:
+                if 'annotations' in dataset_dict:
+                    self._transform_annotations(dataset_dict, transforms, image_shape)
             return dataset_dict
 
         if "annotations" in dataset_dict:
-            # USER: Modify this if you want to keep them for some reason.
-            for anno in dataset_dict["annotations"]:
-                if not self.use_instance_mask:
-                    anno.pop("segmentation", None)
-                if not self.use_keypoint:
-                    anno.pop("keypoints", None)
-
-            # USER: Implement additional transformations if you have other types of data
-            annos = [
-                utils.transform_instance_annotations(
-                    obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
-                )
-                for obj in dataset_dict.pop("annotations")
-                if obj.get("iscrowd", 0) == 0
-            ]
-            instances = utils.annotations_to_instances(
-                annos, image_shape, mask_format=self.instance_mask_format
-            )
-
-            # After transforms such as cropping are applied, the bounding box may no longer
-            # tightly bound the object. As an example, imagine a triangle object
-            # [(0,0), (2,0), (0,2)] cropped by a box [(1,0),(2,2)] (XYXY format). The tight
-            # bounding box of the cropped triangle should be [(1,0),(2,1)], which is not equal to
-            # the intersection of original bounding box and the cropping box.
-            if self.recompute_boxes:
-                instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
-            dataset_dict["instances"] = utils.filter_empty_instances(instances)
+            self._transform_annotations(dataset_dict, transforms, image_shape)
         return dataset_dict

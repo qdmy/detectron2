@@ -30,7 +30,8 @@ class COCOeval_opt(COCOeval):
         # add backward compatibility if useSegm is specified in params
         if p.useSegm is not None:
             p.iouType = "segm" if p.useSegm == 1 else "bbox"
-        logger.info("Evaluate annotation type *{}*".format(p.iouType))
+        if not self.train_controller:
+            logger.info("Evaluate annotation type *{}*".format(p.iouType))
         p.imgIds = list(np.unique(p.imgIds))
         if p.useCats:
             p.catIds = list(np.unique(p.catIds))
@@ -92,7 +93,8 @@ class COCOeval_opt(COCOeval):
 
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
-        logger.info("COCOeval_opt.evaluate() finished in {:0.2f} seconds.".format(toc - tic))
+        if not self.train_controller:
+            logger.info("COCOeval_opt.evaluate() finished in {:0.2f} seconds.".format(toc - tic))
         # >>>> End of code differences with original COCO API
 
     def accumulate(self):
@@ -100,7 +102,8 @@ class COCOeval_opt(COCOeval):
         Accumulate per image evaluation results and store the result in self.eval.  Does not
         support changing parameter settings from those used by self.evaluate()
         """
-        logger.info("Accumulating evaluation results...")
+        if not self.train_controller:
+            logger.info("Accumulating evaluation results...")
         tic = time.time()
         assert hasattr(
             self, "_evalImgs_cpp"
@@ -118,4 +121,5 @@ class COCOeval_opt(COCOeval):
         self.eval["precision"] = np.array(self.eval["precision"]).reshape(self.eval["counts"])
         self.eval["scores"] = np.array(self.eval["scores"]).reshape(self.eval["counts"])
         toc = time.time()
-        logger.info("COCOeval_opt.accumulate() finished in {:0.2f} seconds.".format(toc - tic))
+        if not self.train_controller:
+            logger.info("COCOeval_opt.accumulate() finished in {:0.2f} seconds.".format(toc - tic))

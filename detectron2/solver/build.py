@@ -110,10 +110,21 @@ def maybe_add_gradient_clipping(
         return OptimizerWithGradientClip
 
 
-def build_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.Optimizer:
+def build_optimizer(cfg: CfgNode, model: torch.nn.Module, train_controller=False) -> torch.optim.Optimizer:
     """
     Build an optimizer from config.
     """
+    if train_controller:
+        params = get_default_optimizer_params(
+            model,
+            base_lr=cfg.SOLVER.CONTROLLER.BASE_LR,
+            bias_lr_factor=None,
+        )
+        return maybe_add_gradient_clipping(cfg, torch.optim.Adam)(
+            params,
+            lr=cfg.SOLVER.CONTROLLER.BASE_LR,
+            weight_decay=cfg.SOLVER.CONTROLLER.WEIGHT_DECAY,
+        )
     params = get_default_optimizer_params(
         model,
         base_lr=cfg.SOLVER.BASE_LR,
@@ -218,11 +229,14 @@ def get_default_optimizer_params(
 
 
 def build_lr_scheduler(
-    cfg: CfgNode, optimizer: torch.optim.Optimizer
+    cfg: CfgNode, optimizer: torch.optim.Optimizer, train_controller=False
 ) -> torch.optim.lr_scheduler._LRScheduler:
     """
     Build a LR scheduler from config.
     """
+    if train_controller: # 按照graphnas的代码，train controller没有scheduler
+        return None
+
     name = cfg.SOLVER.LR_SCHEDULER_NAME
 
     if name == "WarmupMultiStepLR":
