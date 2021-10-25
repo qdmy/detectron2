@@ -388,8 +388,8 @@ class RetinaNet(nn.Module):
 
         if self.task_dropout and not self.train_controller:
             b, num_b, c = pred_logits.shape
-            teacher_pred_logits = pred_logits.view(-1, self.num_classes)
-            teacher_pred_logits.detach()
+            if teacher_results is None:
+                teacher_pred_logits = pred_logits.view(-1, self.num_classes)
             # 下面的函数不能用了，还concat一起处理不了了，下面的loss计算函数变了
             # pred_logits, pred_anchor_deltas = permute_all_cls_and_box_to_N_HWA_K_and_concat( # anchor数量维度是这里的A，所以dropout要在这里做
             #     pred_logits, pred_anchor_deltas, self.num_classes
@@ -446,13 +446,13 @@ class RetinaNet(nn.Module):
         #     # final mask也要按照valid mask取一下，那些背景类的final mask也要去掉
         #     gt_labels_target = torch.masked_select(gt_labels_target, final_mask.view(b,-1,c)[valid_mask]).view(gt_labels_target.shape[0], -1)
         
-        # loss_cls = sigmoid_focal_loss_jit(
-        #     pred_logits[valid_mask],
-        #     gt_labels_target.to(pred_logits[0].dtype),
-        #     alpha=self.focal_loss_alpha,
-        #     gamma=self.focal_loss_gamma,
-        #     reduction="sum",
-        # )
+        loss_cls = sigmoid_focal_loss_jit(
+            pred_logits[valid_mask],
+            gt_labels_target.to(pred_logits[0].dtype),
+            alpha=self.focal_loss_alpha,
+            gamma=self.focal_loss_gamma,
+            reduction="sum",
+        )
 
         loss_cls = sigmoid_focal_loss_task_dropout( # sigmoid_focal_loss_jit(
             pred_logits,
@@ -504,7 +504,7 @@ class RetinaNet(nn.Module):
                 return {
                     "loss_cls": loss_cls / self.loss_normalizer,
                     "loss_box_reg": loss_box_reg / self.loss_normalizer,
-                }, [teacher_pred_logits, teacher_pred_boxes]
+                }, [teacher_pred_logits.detach(), teacher_pred_boxes]
             else:
                 return {
                     "loss_cls": loss_cls / self.loss_normalizer,

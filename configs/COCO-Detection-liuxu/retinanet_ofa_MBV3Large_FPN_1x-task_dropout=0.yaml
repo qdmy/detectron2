@@ -19,6 +19,8 @@ MODEL:
 DATASETS:
   TRAIN: ("coco_2017_train_task_dropout",)
   TEST: ("coco_2017_val_task_dropout",)
+DATALOADER:
+  NUM_WORKERS: 2
 SOLVER:
   IMS_PER_BATCH: 16
 OUTPUT_DIR: output/coco-detection/ofa/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0.1

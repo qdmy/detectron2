@@ -112,7 +112,7 @@ _C.DATASETS.STOP_LOAD = -1
 # -----------------------------------------------------------------------------
 _C.DATALOADER = CN()
 # Number of data loading threads
-_C.DATALOADER.NUM_WORKERS = 4
+_C.DATALOADER.NUM_WORKERS = 2 # 4 # 4跑的时候，好多sleep，没用，还占用内存，TODO: 但是为啥会占用这么多呢，哪来的那些进程呢
 # If True, each batch should contain only images for which the aspect ratio
 # is compatible. This groups portrait images together, and landscape images
 # are not batched with portrait images.

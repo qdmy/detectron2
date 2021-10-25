@@ -526,7 +526,7 @@ def build_detection_bn_subset_loader(
     dataset.superclass_masks = torch.tensor(dataset.superclass_masks).cuda()
     sampler_name = cfg.DATALOADER.BN_SUBSET_SAMPLER
     logger = logging.getLogger(__name__)
-    logger.info("Using bn subset sampler {}".format(sampler_name))
+    logger.info("Using bn subset sampler {} with {} images".format(sampler_name, cfg.DATALOADER.BN_SUBSET_SIZE))
     n_samples = len(dataset)
     g = torch.Generator()
     g.manual_seed(cfg.DATALOADER.BN_SUBSET_SEED)
