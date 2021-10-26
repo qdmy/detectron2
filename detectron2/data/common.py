@@ -64,7 +64,11 @@ class MapDataset(data.Dataset):
                     dataset_dict, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = self._dataset[cur_idx]
             else:
                 dataset_dict = self._dataset[cur_idx]
-            data = self._map_func(dataset_dict)
+            data, m = self._map_func(dataset_dict) # 返回的m是non empty后的图片object
+            nonempty_obj = []
+            for i, j in enumerate(m):
+                if j:
+                    nonempty_obj.append(i)
             if data is not None:
                 if self.train_controller:
                     self._fallback_candidates[self.superclass_id].add(cur_idx)
@@ -72,9 +76,9 @@ class MapDataset(data.Dataset):
                     self._fallback_candidates.add(cur_idx)
                 if self.task_dropout:
                     if self.train_controller:
-                        return (data, super_targets_idxs, super_targets)
+                        return (data, super_targets_idxs[nonempty_obj], super_targets[nonempty_obj])
                     else:
-                        return (data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets)
+                        return (data, super_targets_masks[nonempty_obj], super_targets_inverse_masks[nonempty_obj], super_targets_idxs[nonempty_obj], super_targets[nonempty_obj])
                 return data
 
             # _map_func fails for this idx, use a random new index from the pool
@@ -100,7 +104,7 @@ class DatasetFromList(data.Dataset):
     Wrap a list to a torch Dataset. It produces elements of the list as data.
     """
 
-    def __init__(self, lst: list, class_ranges=None, meta=None, in_hier=None, task_dropout: bool = False, \
+    def __init__(self, lst, class_ranges=None, meta=None, in_hier=None, task_dropout: bool = False, \
         copy: bool = True, serialize: bool = True, train_controller: bool = False, whole_dataset=None):
         """
         Args:
@@ -113,7 +117,7 @@ class DatasetFromList(data.Dataset):
                 process instead of making a copy.
         """
         logger = logging.getLogger(__name__)
-        # 当train controller的时候，_lst就是一个list，要先根据superclass id拿出指定超类的数据，再去做下面一些必要的代码
+        # 当train controller的时候，_lst就是一个list，object类型的np.array，要先根据superclass id拿出指定超类的数据，再去做下面一些必要的代码
         self._lst = lst
         self.whole_dataset = whole_dataset # list，包含整个数据集，里面必须是每个superclass放在一起才行
         self.class_ranges = class_ranges
@@ -143,6 +147,9 @@ class DatasetFromList(data.Dataset):
                         self.targets.append(id_for_only_class_in_superclass_exists)
                         end += 1
                     self.images_part.append([start, end])
+                    assert end-start==len(s['annotations']), "img objs indexs wrong."
+                self.targets = np.array(self.targets)
+                self.images_part = np.array(self.images_part)
             else: # train controller的时候，需要把target和image part都搞成每个superclass单独存的
                 self.whole_targets = []
                 self.whole_images_part = []  # 保存每张图片对应的obj是list中的哪一段，原本是定义为dict，但是因为torch的dataset处理getitem的时候是在触发到indexerror时自动停止，结果我这里先遇到了一个keyerror，所以它就报错，改为list，就会在idx超出范围时报错indexerror，就会停止读取数据集了
@@ -154,6 +161,8 @@ class DatasetFromList(data.Dataset):
                         self.whole_targets.append(id_for_only_class_in_superclass_exists)
                         end += 1
                     self.whole_images_part.append([start, end])
+                self.whole_targets = np.array(self.whole_targets)
+                self.whole_images_part = np.array(self.whole_images_part)
 
                 self.targets_per_superclass = [] # 它的长度和当前superclass里的object数量一样
                 self.images_part_per_superclass = [] # 它的长度和当前superclass里的图片数量一样
@@ -170,6 +179,8 @@ class DatasetFromList(data.Dataset):
                         images_part.append([start, end])
                     self.targets_per_superclass.append(targets)
                     self.images_part_per_superclass.append(images_part)
+                self.targets_per_superclass = np.array(self.targets_per_superclass)
+                self.images_part_per_superclass = np.array(self.images_part_per_superclass)
 
             # 这里获取的targets已经是0-80的label了，不需要映射了
             # self.category_ids = self.targets
@@ -197,6 +208,7 @@ class DatasetFromList(data.Dataset):
                 self.super_targets_per_superclass = [] # inference需要这个量
                 for i in self.targets_per_superclass:
                     self.super_targets_per_superclass.append(self.class_to_superclass[i])
+                self.super_targets_per_superclass = np.array(self.super_targets_per_superclass)
 
             self.n_superclass = len(class_ranges)
 
@@ -231,11 +243,17 @@ class DatasetFromList(data.Dataset):
                     superclass_mask = (self.class_to_superclass == i).astype("int32")
                     self.superclass_masks.append(superclass_mask)
                 self.superclass_masks = np.vstack(self.superclass_masks)
+
+                self.superclass_masks = np.array(self.superclass_masks)
+                self.superclass_samples_indices = np.array(self.superclass_samples_indices)
+                self.super_targets_idxes_per_superclass = np.array(self.super_targets_idxes_per_superclass)
+
             else:
                 self.super_targets_masks = (self.super_targets.reshape(-1, 1) == self.class_to_superclass).astype("single")
                 self.super_targets_inverse_masks = (self.super_targets.reshape(-1, 1) != self.class_to_superclass).astype(
                     "single")
                 self.super_targets_idxes = []
+                assert end==len(self.super_targets_masks), "end={} wrong, total {} objects".format(end, len(self.super_targets_masks))
                 for idx in range(end):
                     self.super_targets_idxes.append((self.super_targets[idx] == self.class_to_superclass).nonzero()[0])
                 self.super_targets_idxes = np.stack(self.super_targets_idxes, axis=0).astype(
@@ -248,6 +266,10 @@ class DatasetFromList(data.Dataset):
                     self.superclass_samples_indices.append(idx.tolist())
                     superclass_mask = (self.class_to_superclass == i).astype("single")
                     self.superclass_masks.append(superclass_mask)
+
+                self.super_targets_idxes = np.array(self.super_targets_idxes)
+                self.superclass_masks = np.array(self.superclass_masks)
+                self.superclass_samples_indices = np.array(self.superclass_samples_indices, dtype=object)
 
         def _serialize(data):
             buffer = pickle.dumps(data, protocol=-1)
@@ -319,7 +341,8 @@ class DatasetFromList(data.Dataset):
             start_addr = 0 if idx == 0 else self._addr[idx - 1].item()
             end_addr = self._addr[idx].item()
             bytes = memoryview(self._lst[start_addr:end_addr])
-
+            return_lst = pickle.loads(bytes)
+            assert len(return_lst['annotations'])==end-start, "obj indexs num {} != obj num {} in image".format(end-start, len(return_lst['annotations']))
             if self.task_dropout: # _serialize的话，需要先根据image_part对应的start和end，找到对应的下面这些值的addr的开始与结束
                 """
                 下面这些，需要一次得到多个，所以必须用for训练来一个个object的得到
@@ -349,11 +372,12 @@ class DatasetFromList(data.Dataset):
                     super_targets_bytes = memoryview(self.super_targets[super_targets_start_addr:super_targets_end_addr])
                     super_targets_bytes_for_return.append(pickle.loads(super_targets_bytes))
                 # 仔细想想其实这些量的_serialize有没有必要，这样搞还要加个for训练来获取值，很多次的pickle.loads，会不会更慢了
-                return pickle.loads(bytes), \
-                        np.stack(super_targets_masks_bytes_for_return, axis=0), \
-                        np.stack(super_targets_inverse_masks_bytes_for_return, axis=0), \
-                        np.stack(super_targets_idxes_bytes_for_return, axis=0), \
-                        np.array(super_targets_bytes_for_return),
+                assert len(super_targets_masks_bytes_for_return)==len(return_lst['annotations']), "return value length num {} != obj num {} in image".format(len(super_targets_masks_bytes_for_return), len(return_lst['annotations']))
+                return_super_targets_masks = np.stack(super_targets_masks_bytes_for_return, axis=0)
+                return_super_targets_inverse_masks = np.stack(super_targets_inverse_masks_bytes_for_return, axis=0)
+                return_super_targets_idxes = np.stack(super_targets_idxes_bytes_for_return, axis=0)
+                return_super_targets = np.array(super_targets_bytes_for_return)
+                return return_lst, return_super_targets_masks, return_super_targets_inverse_masks, return_super_targets_idxes, return_super_targets
             return pickle.loads(bytes)
         elif self._copy:
             if self.train_controller:

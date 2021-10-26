@@ -89,13 +89,13 @@ class Matcher(object):
 
         # match_quality_matrix is M (gt) x N (predicted)
         # Max over gt elements (dim 0) to find best gt candidate for each prediction
-        matched_vals, matches = match_quality_matrix.max(dim=0)
+        matched_vals, matches = match_quality_matrix.max(dim=0) # 得到每个anchor最匹配的是哪个gt，保存它们的值，和对应的obj index（范围是这个图片里的0-num_obj）
 
         match_labels = matches.new_full(matches.size(), 1, dtype=torch.int8)
 
         for (l, low, high) in zip(self.labels, self.thresholds[:-1], self.thresholds[1:]):
             low_high = (matched_vals >= low) & (matched_vals < high)
-            match_labels[low_high] = l
+            match_labels[low_high] = l # match_labels里保存的是每个object，是ignore, negative class, positive class
 
         if self.allow_low_quality_matches:
             self.set_low_quality_matches_(match_labels, match_quality_matrix)
@@ -113,7 +113,7 @@ class Matcher(object):
         :paper:`Faster R-CNN`.
         """
         # For each gt, find the prediction with which it has highest quality
-        highest_quality_foreach_gt, _ = match_quality_matrix.max(dim=1)
+        highest_quality_foreach_gt, _ = match_quality_matrix.max(dim=1) # 找到每个gt最匹配的是哪个anchor，得到它的value和所有anchor中所在的位置
         # Find the highest quality match available, even if it is low, including ties.
         # Note that the matches qualities must be positive due to the use of
         # `torch.nonzero`.
@@ -123,4 +123,4 @@ class Matcher(object):
         # If an anchor was labeled positive only due to a low-quality match
         # with gt_A, but it has larger overlap with gt_B, it's matched index will still be gt_B.
         # This follows the implementation in Detectron, and is found to have no significant impact.
-        match_labels[pred_inds_with_highest_quality] = 1
+        match_labels[pred_inds_with_highest_quality] = 1 # iou最高的几个置为1

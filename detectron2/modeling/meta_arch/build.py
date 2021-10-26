@@ -49,39 +49,39 @@ def sigmoid_focal_loss_task_dropout(
     pred_prob = torch.sigmoid(inputs) # 先sigmoid，再去task dropout，再得到p，也没影响
     if final_mask is not None:
         # 需要对input进行两次task dropout
-        # # 一次是为了计算p，因为已经经过了sigmoid，所以它的填充值为0
+        # 一次是为了计算p，因为已经经过了sigmoid，所以它的填充值为0
         # prob = pred_prob.view(-1, c)
-        # selected_prob = torch.masked_select(prob, final_mask).view(prob.shape[0], -1)
-        # mask_p = prob.new_zeros(prob.shape)
-        # mask_p[final_mask] = selected_prob.view(-1)
-        # p = mask_p.view(b, num_b, c)[valid_mask] # 这里得到task dropout后的p
+        selected_prob = torch.masked_select(pred_prob, final_mask)
+        mask_p = pred_prob.new_zeros(pred_prob.shape)
+        mask_p[final_mask] = selected_prob
+        p = mask_p[valid_mask] # 这里得到task dropout后的p
 
-        # # 另一次是为了输入进BCEwithlogit函数，focal_type1=-inf
-        # # 里面有个sigmoid，所以填充值需要是-inf，可以new_ones()乘一个很大的负值（这样在backward的时候会不会有问题）。
+        # 另一次是为了输入进BCEwithlogit函数，focal_type1=-inf
+        # 里面有个sigmoid，所以填充值需要是-inf，可以new_ones()乘一个很大的负值（这样在backward的时候会不会有问题）。
         # new_input = inputs.view(-1, c)
-        # selected_inputs = torch.masked_select(new_input, final_mask).view(new_input.shape[0], -1)
-        # processed_inputs = -new_input.new_ones(new_input.shape) * 89 # 最小就是Torch.sigmoid(-89)=0
-        # processed_inputs[final_mask] = selected_inputs.view(-1)
-        # processed_inputs = processed_inputs.view(b, num_b, c)[valid_mask] # 这里得到task dropout后的inputs
-        # ce_loss = F.binary_cross_entropy_with_logits(processed_inputs, targets, reduction="none")
+        selected_inputs = torch.masked_select(inputs, final_mask)
+        processed_inputs = -inputs.new_ones(inputs.shape) * 80 # 最小就是Torch.sigmoid(-89)=0
+        processed_inputs[final_mask] = selected_inputs
+        processed_inputs = processed_inputs[valid_mask] # 这里得到task dropout后的inputs
+        ce_loss = F.binary_cross_entropy_with_logits(processed_inputs, targets, reduction="none")
 
-        # 下面这个计算方法，还是有波动，而且很大, focal_type2=select
-        # 或者把target也按照final mask选出来，按照这种实现方式，因为reduction是none，所以得到的ce loss还是一个tensor，把它再填回一个全零的tensor，作为最终task dropout后的celoss
-        # 只算对应部分的p
-        prob = pred_prob.view(-1, c)
-        p = torch.masked_select(prob, final_mask).view(b, num_b, -1)[valid_mask]
+        # # 下面这个计算方法，还是有波动，而且很大, focal_type2=select
+        # # 或者把target也按照final mask选出来，按照这种实现方式，因为reduction是none，所以得到的ce loss还是一个tensor，把它再填回一个全零的tensor，作为最终task dropout后的celoss
+        # # 只算对应部分的p
+        # # prob = pred_prob.view(-1, c)
+        # p = torch.masked_select(pred_prob, final_mask).view(b, num_b, -1)[valid_mask]
         
-        # 对inputs做task dropout，其实就是按照mask把对应的值选出来，但是不用填充回去
-        input_for_bce = inputs.view(-1, c)
-        inputs = torch.masked_select(input_for_bce, final_mask).view(b, num_b, -1)[valid_mask] # 这里得到task dropout后的input_for_bce
-        # 对targets做task dropout，其实就是按照mask把对应的值选出来，但是不用填充回去
-        final_mask_for_target = final_mask.view(b, num_b, c)[valid_mask]
-        targets = torch.masked_select(targets, final_mask_for_target).view(targets.shape[0], -1) # 这里得到task dropout后的input_for_bce
-        assert p.shape == targets.shape, "after task dropout, p and target should still have the same shape"
-        assert inputs.shape == targets.shape, "after task dropout, input and target should still have the same shape"
+        # # 对inputs做task dropout，其实就是按照mask把对应的值选出来，但是不用填充回去
+        # # input_for_bce = inputs.view(-1, c)
+        # inputs = torch.masked_select(inputs, final_mask).view(b, num_b, -1)[valid_mask] # 这里得到task dropout后的input_for_bce
+        # # 对targets做task dropout，其实就是按照mask把对应的值选出来，但是不用填充回去
+        # final_mask_for_target = final_mask[valid_mask]
+        # targets = torch.masked_select(targets, final_mask_for_target).view(targets.shape[0], -1) # 这里得到task dropout后的input_for_bce
+        # assert p.shape == targets.shape, "after task dropout, p and target should still have the same shape"
+        # assert inputs.shape == targets.shape, "after task dropout, input and target should still have the same shape"
         
-        # 用selected的input和target计算BCELoss
-        ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+        # # 用selected的input和target计算BCELoss
+        # ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     else:
         p = pred_prob[valid_mask]
         ce_loss = F.binary_cross_entropy_with_logits(inputs[valid_mask], targets, reduction="none")

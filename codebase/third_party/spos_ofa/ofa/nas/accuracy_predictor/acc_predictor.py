@@ -46,5 +46,5 @@ class AccuracyPredictor(nn.Module):
 
 	def predict_acc(self, arch_dict_list):
 		X = [self.arch_encoder.arch2feature(arch_dict) for arch_dict in arch_dict_list]
-		X = torch.tensor(np.array(X)).float().to(self.device)
+		X = torch.FloatTensor(np.array(X)).float().to(self.device)
 		return self.forward(X)

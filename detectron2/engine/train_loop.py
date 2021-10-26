@@ -280,6 +280,8 @@ class SimpleTrainer(TrainerBase):
         """
         Implement the standard training logic described above.
         """
+        import gc 
+        gc.collect()
         assert self.model.training, "[SimpleTrainer] model was changed to eval mode!"
         start = time.perf_counter()
         """
@@ -378,6 +380,8 @@ class SimpleTrainer(TrainerBase):
         """
         Implement the standard training logic described above.
         """
+        import gc 
+        gc.collect()
         # 把teacher model设为eval
         self.model.train()
         self.teacher_model.eval() 

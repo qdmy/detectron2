@@ -485,7 +485,7 @@ def filter_empty_instances(instances, by_box=True, by_mask=True, box_threshold=1
     m = r[0]
     for x in r[1:]:
         m = m & x
-    return instances[m]
+    return instances[m], m # 这个m也要，拿出去对super targets进行对应的mask
 
 
 def create_keypoint_hflip_indices(dataset_names: Union[str, List[str]]) -> List[int]:

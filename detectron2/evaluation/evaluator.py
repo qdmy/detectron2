@@ -13,7 +13,7 @@ from detectron2.utils.logger import log_every_n_seconds
 import numpy as np
 # from codebase.third_party.spos_ofa.ofa.imagenet_classification.elastic_nn.networks.ofa_resnets import OFAResNets
 # from codebase.third_party.spos_ofa.ofa.imagenet_classification.elastic_nn.networks.ofa_mbv3 import OFAMobileNetV3
-
+from tqdm import tqdm, trange
 import copy
 import torch.nn.functional as F
 from codebase.third_party.spos_ofa.ofa.utils import AverageMeter, get_net_device
@@ -74,8 +74,10 @@ def set_running_statistics(model, data_loader, distributed=False):
 
     with torch.no_grad():
         DynamicBatchNorm2d.SET_RUNNING_STATISTICS = True
-        for data in data_loader:
+        for data in tqdm(data_loader):
             inputs = np.array(data, dtype=object).T
+            for i in range(len(inputs[0])):
+                assert len(inputs[0][i]['instances'])==len(inputs[1][i]), "length not the same"
             data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = inputs
             forward_model(data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets)
         DynamicBatchNorm2d.SET_RUNNING_STATISTICS = False

@@ -142,7 +142,7 @@ class DatasetMapper:
         # the intersection of original bounding box and the cropping box.
         if self.recompute_boxes:
             instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
-        dataset_dict["instances"] = utils.filter_empty_instances(instances)
+        dataset_dict["instances"], self.m = utils.filter_empty_instances(instances)
 
     def __call__(self, dataset_dict):
         """
@@ -190,8 +190,8 @@ class DatasetMapper:
             if self.task_dropout:
                 if 'annotations' in dataset_dict:
                     self._transform_annotations(dataset_dict, transforms, image_shape)
-            return dataset_dict
+            return dataset_dict, self.m
 
         if "annotations" in dataset_dict:
             self._transform_annotations(dataset_dict, transforms, image_shape)
-        return dataset_dict
+        return dataset_dict, self.m

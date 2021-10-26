@@ -373,7 +373,7 @@ def _train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
         _log_api_usage("dataset." + cfg.DATASETS.TRAIN[0])
     # 控制load多少数据，比如debug的时候指定一下，就不用每次都全load了
     if cfg.DATASETS.STOP_LOAD > 0:
-        dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)]
+        dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].copy()
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
 
@@ -437,7 +437,7 @@ def build_detection_train_loader(
             ``total_batch_size / num_workers``, where ``mapped_element`` is produced
             by the ``mapper``.
     """
-    if isinstance(dataset, list):
+    if isinstance(dataset, list) or isinstance(dataset, np.ndarray):
         dataset = DatasetFromList(dataset, class_ranges, meta, in_hier, task_dropout, copy=False)
     if mapper is not None:
         dataset = MapDataset(dataset, mapper, task_dropout=task_dropout)
@@ -474,7 +474,7 @@ def _bn_subset_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=Non
         _log_api_usage("dataset." + cfg.DATASETS.TRAIN[0])
     # 控制load多少数据，比如debug的时候指定一下，就不用每次都全load了
     if cfg.DATASETS.STOP_LOAD > 0:
-        dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)]
+        dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].copy()
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
 
@@ -521,9 +521,9 @@ def build_detection_bn_subset_loader(
             ``total_batch_size / num_workers``, where ``mapped_element`` is produced
             by the ``mapper``.
     """
-    if isinstance(dataset, list):
+    if isinstance(dataset, list) or isinstance(dataset, np.ndarray):
         dataset = DatasetFromList(dataset, class_ranges, meta, in_hier, task_dropout, copy=False)
-    dataset.superclass_masks = torch.tensor(dataset.superclass_masks).cuda()
+    dataset.superclass_masks = torch.tensor(dataset.superclass_masks, dtype=bool).cuda()
     sampler_name = cfg.DATALOADER.BN_SUBSET_SAMPLER
     logger = logging.getLogger(__name__)
     logger.info("Using bn subset sampler {} with {} images".format(sampler_name, cfg.DATALOADER.BN_SUBSET_SIZE))
@@ -578,15 +578,16 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False,
         assert isinstance(dataset, list)
         if cfg.DATASETS.STOP_LOAD > meta.superclass_num:
             super_d_position = cfg.DATASETS.STOP_LOAD//meta.superclass_num + 1
-            dataset = [super_d[:super_d_position] for super_d in dataset]
+            dataset = [super_d[:super_d_position].copy() for super_d in dataset]
 
         # 把整个数据集放到一个list里
         whole_dataset = []
         for super_d in dataset:
             whole_dataset.extend(super_d)
+        whole_dataset = np.array(whole_dataset, dtype=object)
     else:
         if cfg.DATASETS.STOP_LOAD > 0:
-            dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)]
+            dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].coyp()
         whole_dataset = None
     if mapper is None:
         mapper = DatasetMapper(cfg, False, task_dropout=task_dropout)

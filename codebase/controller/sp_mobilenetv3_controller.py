@@ -36,7 +36,7 @@ class SP_MobileNetV3Controller(nn.Module):
         self.kernel_sizes = kernel_sizes
         self.n_conditions = len(constraint_list)
         self.n_superclass = n_superclass
-        self.register_buffer("constraint_list", torch.tensor(constraint_list))
+        self.register_buffer("constraint_list", torch.FloatTensor(constraint_list))
 
         self.hidden_size = hidden_size
 
