@@ -569,6 +569,8 @@ class RetinaNet(nn.Module):
         for gt_per_image in gt_instances:
             match_quality_matrix = pairwise_iou(gt_per_image.gt_boxes, anchors)
             matched_idxs, anchor_labels = self.anchor_matcher(match_quality_matrix) # matched_idxs是每个anchor对应的是这个图片里的第几个obj，anchor_labels对应的是每个anchor属于ignore-1, negative class0, positive class1哪一个
+            if not self.training: # 推理的时候，还是要保留每个anchor对应match的object index
+                matched_idxs_for_mask.append(matched_idxs)
             del match_quality_matrix
 
             if len(gt_per_image) > 0:
@@ -581,9 +583,11 @@ class RetinaNet(nn.Module):
                 gt_labels_i[anchor_labels == -1] = -1
 
                 # 把matched_idx里的ignored-1和background0全部置为-1，这个-1就是对应task dropout mask的最后一个vector，算loss那里在得到dataloader产生的mask后，会在最后concat一个全false的vector
-                matched_idxs[anchor_labels == 0] = -1
-                matched_idxs[anchor_labels == -1] = -1
-                matched_idxs_for_mask.append(matched_idxs)
+                # 当train的时候才需要把不合格的anchor置为-1
+                if self.training:
+                    matched_idxs[anchor_labels == 0] = -1
+                    matched_idxs[anchor_labels == -1] = -1
+                    matched_idxs_for_mask.append(matched_idxs)
             else:
                 matched_gt_boxes_i = torch.zeros_like(anchors.tensor)
                 gt_labels_i = torch.zeros_like(matched_idxs) + self.num_classes

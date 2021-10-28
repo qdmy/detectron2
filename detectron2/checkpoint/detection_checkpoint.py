@@ -118,7 +118,7 @@ class DetectionCheckpointer(Checkpointer):
             loaded = loaded_with_correct_key
         
         # ofaMbv3里的conv和bn都变成了conv.conv和bn.bn
-        if self.is_ofa and not self.resume:
+        if self.is_ofa and 'ofa' not in filename:
             loaded_with_correct_key_for_OFA = {}
             for k, v in loaded.items():
                 # replace conv to conv.conv, bn to bn.bn
