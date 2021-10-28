@@ -587,7 +587,7 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False,
         whole_dataset = np.array(whole_dataset, dtype=object)
     else:
         if cfg.DATASETS.STOP_LOAD > 0:
-            dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].coyp()
+            dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].copy()
         whole_dataset = None
     if mapper is None:
         mapper = DatasetMapper(cfg, False, task_dropout=task_dropout)

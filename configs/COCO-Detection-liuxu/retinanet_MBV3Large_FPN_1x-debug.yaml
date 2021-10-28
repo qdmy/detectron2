@@ -8,8 +8,8 @@ MODEL:
   FPN:
     IN_FEATURES: ["res2", "res4", "res5"]
 DATASETS:
-  TRAIN: ("coco_2017_train_50",)
-  TEST: ("coco_2017_val_50",)
-  # TRAIN: ("coco_2017_train_task_dropout_50",)
-  # TEST: ("coco_2017_val_task_dropout_50",)
+  # TRAIN: ("coco_2017_train_50",)
+  # TEST: ("coco_2017_val_50",)
+  TRAIN: ("coco_2017_train_task_dropout_50",)
+  TEST: ("coco_2017_val_task_dropout_50",)
 OUTPUT_DIR: output/coco-detection/retinanet_MBV3_FPN_1x-debug
