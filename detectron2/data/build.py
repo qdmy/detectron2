@@ -523,7 +523,7 @@ def build_detection_bn_subset_loader(
     """
     if isinstance(dataset, list) or isinstance(dataset, np.ndarray):
         dataset = DatasetFromList(dataset, class_ranges, meta, in_hier, task_dropout, copy=False)
-    dataset.superclass_masks = torch.tensor(dataset.superclass_masks, dtype=bool).cuda()
+    dataset.superclass_masks = torch.tensor(dataset.superclass_masks).cuda()
     sampler_name = cfg.DATALOADER.BN_SUBSET_SAMPLER
     logger = logging.getLogger(__name__)
     logger.info("Using bn subset sampler {} with {} images".format(sampler_name, cfg.DATALOADER.BN_SUBSET_SIZE))
@@ -584,7 +584,6 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False,
         whole_dataset = []
         for super_d in dataset:
             whole_dataset.extend(super_d)
-        whole_dataset = np.array(whole_dataset, dtype=object)
     else:
         if cfg.DATASETS.STOP_LOAD > 0:
             dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].copy()

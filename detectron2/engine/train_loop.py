@@ -280,8 +280,6 @@ class SimpleTrainer(TrainerBase):
         """
         Implement the standard training logic described above.
         """
-        import gc 
-        gc.collect()
         assert self.model.training, "[SimpleTrainer] model was changed to eval mode!"
         start = time.perf_counter()
         """
@@ -311,12 +309,12 @@ class SimpleTrainer(TrainerBase):
                         unwarp_module(self.model.backbone.bottom_up).sample_active_subnet()
 
                     if self.task_dropout:
-                        loss_dict, _ = self.model(data, super_targets_masks=super_targets_masks, \
+                        loss_dict, *_ = self.model(data, super_targets_masks=super_targets_masks, \
                             super_targets_inverse_masks=super_targets_inverse_masks, \
                                 super_targets_idxs=super_targets_idxs, super_targets=super_targets, \
                                     teacher_model=self.teacher_model)
                     else:
-                        loss_dict, _ = self.model(data)
+                        loss_dict, *_ = self.model(data)
                     if isinstance(loss_dict, torch.Tensor):
                         losses = loss_dict
                         loss_dict = {"total_loss": losses}
@@ -347,12 +345,12 @@ class SimpleTrainer(TrainerBase):
             loss_dict = final_loss_dict
         else:
             if self.task_dropout:
-                loss_dict, _ = self.model(data, super_targets_masks=super_targets_masks, \
+                loss_dict, *_ = self.model(data, super_targets_masks=super_targets_masks, \
                     super_targets_inverse_masks=super_targets_inverse_masks, \
                         super_targets_idxs=super_targets_idxs, super_targets=super_targets, \
                             teacher_model=self.teacher_model)
             else:
-                loss_dict, _ = self.model(data)
+                loss_dict, *_ = self.model(data)
             if isinstance(loss_dict, torch.Tensor):
                 losses = loss_dict
                 loss_dict = {"total_loss": losses}
@@ -380,8 +378,6 @@ class SimpleTrainer(TrainerBase):
         """
         Implement the standard training logic described above.
         """
-        import gc 
-        gc.collect()
         # 把teacher model设为eval
         self.model.train()
         self.teacher_model.eval() 

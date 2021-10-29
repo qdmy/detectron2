@@ -82,4 +82,4 @@ class AccuracyPredictor:
                 ex_onehot[start + ex_map[ex_list[i]]] = 1
 
         r_onehot[(r - 112) // 16] = 1
-        return torch.FloatTensor(ks_onehot + ex_onehot + r_onehot)
+        return torch.Tensor(ks_onehot + ex_onehot + r_onehot)

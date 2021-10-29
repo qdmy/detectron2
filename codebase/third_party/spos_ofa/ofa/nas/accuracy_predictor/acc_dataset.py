@@ -152,8 +152,8 @@ class AccuracyDataset:
 				t.update()
 		base_acc = np.mean(Y_all)
 		# convert to torch tensor
-		X_all = torch.FloatTensor(X_all, dtype=torch.float)
-		Y_all = torch.FloatTensor(Y_all)
+		X_all = torch.tensor(X_all, dtype=torch.float)
+		Y_all = torch.tensor(Y_all)
 
 		# random shuffle
 		shuffle_idx = torch.randperm(len(X_all))
