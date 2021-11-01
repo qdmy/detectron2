@@ -55,6 +55,8 @@ def sigmoid_focal_loss_task_dropout(
         mask_p = pred_prob.new_zeros(pred_prob.shape) # 加一个很小的值。因为不能是绝对的0，否则celoss里的log就会算出-inf，再乘一个0，得出的是nan。但是这样为什么模型还能训练呢。。。=>因为人家celoss函数里已经做了这个事情
         mask_p[final_mask] = selected_prob
         p = mask_p[valid_mask] # 这里得到task dropout后的p
+        # 等价于下面这行
+        ce_loss = F.binary_cross_entropy(p, targets, reduction="none")
 
         # 另一次是为了输入进BCEwithlogit函数，focal_type1=-inf
         # 里面有个sigmoid，所以填充值需要是-inf，可以new_ones()乘一个很大的负值（这样在backward的时候会不会有问题）。 # 师兄说这样很奇怪，还是把celoss的函数拆开
@@ -65,9 +67,6 @@ def sigmoid_focal_loss_task_dropout(
         # processed_inputs = processed_inputs[valid_mask] # 这里得到task dropout后的inputs
         # ce_loss = F.binary_cross_entropy_with_logits(processed_inputs, targets, reduction="none")
         
-        # 等价于下面这行
-        ce_loss = F.binary_cross_entropy(p, targets, reduction="none")
-
         # # 下面这个计算方法，还是有波动，而且很大, focal_type2=select
         # # 或者把target也按照final mask选出来，按照这种实现方式，因为reduction是none，所以得到的ce loss还是一个tensor，把它再填回一个全零的tensor，作为最终task dropout后的celoss
         # # 只算对应部分的p

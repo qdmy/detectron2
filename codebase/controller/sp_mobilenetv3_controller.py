@@ -144,7 +144,7 @@ class SP_MobileNetV3Controller(nn.Module):
                 hx, cx = self.lstm(embed, hidden)
                 hidden = (hx, cx)
                 logits = self.depth_linear(hx)
-            probs = F.sigmoid(logits)
+            probs = torch.sigmoid(logits)
             depth, depth_cum_indicator = self._impl(probs, temperature)
 
             depths.append(self.depths[depth.item()])
@@ -162,7 +162,7 @@ class SP_MobileNetV3Controller(nn.Module):
                     hx, cx = self.lstm(embed, hidden)
                     hidden = (hx, cx)
                     logits = self.width_linear(hx)
-                probs = F.sigmoid(logits)
+                probs = torch.sigmoid(logits)
                 ratio, ratio_cum_indicator = self._impl(probs, temperature)
 
                 ratios.append(self.expand_ratios[ratio.item()])
@@ -177,7 +177,7 @@ class SP_MobileNetV3Controller(nn.Module):
                     hx, cx = self.lstm(embed, hidden)
                     hidden = (hx, cx)
                     logits = self.ks_linear(hx)
-                probs = F.sigmoid(logits)
+                probs = torch.sigmoid(logits)
                 k, kernel_cum_indicator = self._impl(probs, temperature)
 
                 ks.append(self.kernel_sizes[k.item()])

@@ -644,10 +644,11 @@ def build_detection_test_loader(dataset, *, mapper, sampler=None, num_workers=0,
         dataset = MapDataset(dataset, mapper, task_dropout=task_dropout, train_controller=train_controller, subperclass_indices=superclass_val_indices)
     if sampler is None:
         if train_controller: # 按照graphnas代码，不用sampler
-            if mapper is not None:
-                sampler = InferenceSampler_controller([len(dset) for dset in dataset._dataset._lst])
-            else:
-                sampler = InferenceSampler_controller([len(dset) for dset in dataset._lst])
+            sampler = None
+            # if mapper is not None:
+            #     sampler = InferenceSampler_controller([len(dset) for dset in dataset._dataset._lst])
+            # else:
+            #     sampler = InferenceSampler_controller([len(dset) for dset in dataset._lst])
         else:
             sampler = InferenceSampler(len(dataset))
     # Always use 1 image per worker during inference since this is the

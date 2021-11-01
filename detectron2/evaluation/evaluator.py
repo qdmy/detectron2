@@ -419,7 +419,7 @@ def inference_on_dataset(
             return results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss
         return results
 
-def controller_inference_one_iter(
+def controller_inference_on_dataset(
     logger, model, iter_data, iter_in_epoch, iteration, epoch,  print_, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], \
         depths=None, ratios=None, kernel_sizes=None,
 ):
@@ -444,6 +444,9 @@ def controller_inference_one_iter(
     Returns:
         The return value of `evaluator.evaluate()`
     """
+    if iter_in_epoch==0 and len(evaluator._predictions)>0:
+        results = evaluator.evaluate()
+
     # logger = logging.getLogger(__name__)
     if print_:
         logger.info("Inference epoch:{}/{} iter:{} ".format(epoch+1, iter_in_epoch, iteration))
@@ -464,7 +467,6 @@ def controller_inference_one_iter(
             torch.cuda.synchronize()
         evaluator.process(inputs, outputs)
 
-    results = evaluator.evaluate(current_iter=iteration)
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle
     if results is None:

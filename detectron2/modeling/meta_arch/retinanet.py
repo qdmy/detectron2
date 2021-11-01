@@ -341,8 +341,9 @@ class RetinaNet(nn.Module):
                 if self.train_controller:
                     losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
                 # 正常推理的时候还是需要这些结果，才能得出mAP
-                results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes,
-                                    super_targets_idxs, super_targets, gt_labels, matched_idxs_for_mask)
+                with torch.no_grad():
+                    results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes,
+                                        super_targets_idxs, super_targets, gt_labels, matched_idxs_for_mask)
             else:
                 results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
 
@@ -388,7 +389,7 @@ class RetinaNet(nn.Module):
 
         # assert teacher_results is None, "when not task dropout, teacher does not exist"
         final_mask = None
-
+        teacher_soft_label = None # for train ofa
         if self.task_dropout and not self.train_controller:
             b, num_b, c = pred_logits.shape
             if teacher_results is None:
@@ -421,7 +422,7 @@ class RetinaNet(nn.Module):
 
             # 如果用detectron2原版的focal loss函数，task dropout之后就不用填充回去，直接masked_select出logit和target作为输入
             # 但是sigmoid跟loss包装在一起又比较好，所以把做mask需要的参数传给那个函数，在其内部进行mask操作
-            teacher_soft_label = None
+
             if teacher_results is not None: # teacher的结果要用student的final mask来计算
                 assert isinstance(teacher_results, list) and len(teacher_results)==2, "teacher results should contain teacher pred cls and box"
                 teacher_pred_boxes = teacher_results[1]

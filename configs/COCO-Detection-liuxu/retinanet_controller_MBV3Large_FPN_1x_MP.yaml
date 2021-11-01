@@ -10,7 +10,7 @@ MODEL:
     NAME: "MP_MobileNetV3Controller"
     TEACHER:
       BACKBONE: "build_retinanet_mp_ofa_mbv3_fpn_backbone"
-      WEIGHT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0.05-SyncBN-2kd_loss/model_final.pth"
+      WEIGHT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0.1-2kd/model_final.pth"
   FPN:
     IN_FEATURES: ["res2", "res4", "res5"]
     USE_RELU: True

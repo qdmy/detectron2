@@ -6,7 +6,7 @@ import sys
 from collections.abc import Mapping
 
 
-def print_csv_format(results, only_mAP=False):
+def print_csv_format(results, only_AP=False):
     """
     Print main metrics in a format similar to Detectron,
     so that they are easy to copypaste into a spreadsheet.
@@ -17,13 +17,14 @@ def print_csv_format(results, only_mAP=False):
     """
     assert isinstance(results, Mapping) or not len(results), results
     logger = logging.getLogger(__name__)
-    if only_mAP:
+    if only_AP:
         for task, res in results.items():
             if isinstance(res, Mapping):
                 # Don't print "AP-category" metrics since they are usually not tracked.
                 important_res = [(k, v) for k, v in res.items() if "-" not in k]
-                mAP = ["{0:.4f}".format(k[1]) for k in important_res][0]
-        return mAP
+                AP_names = [k[0] for k in important_res]
+                AP_results = ["{0:.4f}".format(k[1]) for k in important_res]
+        return AP_names, AP_results
     else:
         for task, res in results.items():
             if isinstance(res, Mapping):

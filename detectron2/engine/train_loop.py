@@ -409,7 +409,8 @@ class SimpleTrainer(TrainerBase):
             self.kernel_size_for_controller = ks_probs
 
             # TODO: 这里同时得到了loss和inference的结果，怎么展示，想想怎么test，多久test一次。test应该用的是这里一样的data，要重写个test controller函数吗？
-            teacher_loss, *_ = self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depths_probs, \
+            teacher_loss, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = \
+                self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depths_probs, \
                 ratio_for_controller=ratios_probs, ks_for_controller=ks_probs) # 让teacher model在推理的时候计算loss，返回一个dict，反正它是把loss的计算包装在teacher model的forward里的，就用目标检测默认的focal loss和regression loss
             if hasattr(self.teacher_model, "module"):
                 flops = unwarp_module(self.teacher_model.module.backbone.bottom_up).get_flops(
@@ -434,7 +435,8 @@ class SimpleTrainer(TrainerBase):
             self.ratio_for_controller = ratio_cum_indicators
             self.kernel_size_for_controller = kernel_cum_size_indicators
 
-            teacher_loss, *_ = self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depth_cum_indicators, \
+            teacher_loss, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = \
+                self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depth_cum_indicators, \
                 ratio_for_controller=ratio_cum_indicators, ks_for_controller=kernel_cum_size_indicators)
             if hasattr(self.teacher_model, "module"):
                 flops = unwarp_module(self.teacher_model.module.backbone.bottom_up).get_flops(
@@ -462,11 +464,10 @@ class SimpleTrainer(TrainerBase):
         teacher_loss["mse_loss"] = mse_loss # 把mse loss加进dict
         losses = 0
         for k, v in teacher_loss.items():
-            teacher_loss[k] = v.item()
             if k == "mse_loss":
-                losses += v.item() * self.loss_lambda
+                losses += v * self.loss_lambda
             else:
-                losses += v.item()
+                losses += v
         losses.backward()
         self._write_metrics(teacher_loss, data_time)
 
@@ -477,6 +478,9 @@ class SimpleTrainer(TrainerBase):
         """
         self.optimizer.step()
 
+        # 返回出去用来test
+        return processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss
+        
     def _write_metrics(
         self,
         loss_dict: Dict[str, torch.Tensor],

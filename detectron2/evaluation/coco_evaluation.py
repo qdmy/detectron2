@@ -47,7 +47,7 @@ class COCOEvaluator(DatasetEvaluator):
         tasks=None,
         distributed=True,
         output_dir=None,
-        print_period=0, train_controller=False,
+        train_controller=False,
         *,
         use_fast_impl=True,
         kpt_oks_sigmas=(),
@@ -87,7 +87,6 @@ class COCOEvaluator(DatasetEvaluator):
         self._output_dir = output_dir
         self._use_fast_impl = use_fast_impl
 
-        self.print_period = print_period
         self.train_controller = train_controller
 
         if tasks is not None and isinstance(tasks, CfgNode):
@@ -149,7 +148,7 @@ class COCOEvaluator(DatasetEvaluator):
             if len(prediction) > 1:
                 self._predictions.append(prediction)
 
-    def evaluate(self, img_ids=None, current_iter=0):
+    def evaluate(self, img_ids=None):
         """
         Args:
             img_ids: a list of image IDs to evaluate on. Default to None for the whole dataset
@@ -178,7 +177,7 @@ class COCOEvaluator(DatasetEvaluator):
         if "proposals" in predictions[0]:
             self._eval_box_proposals(predictions)
         if "instances" in predictions[0]:
-            self._eval_predictions(predictions, img_ids=img_ids, current_iter=current_iter)
+            self._eval_predictions(predictions, img_ids=img_ids)
         # Copy so the caller can do whatever with results
         return copy.deepcopy(self._results)
 
@@ -194,15 +193,10 @@ class COCOEvaluator(DatasetEvaluator):
                 tasks.add("keypoints")
         return sorted(tasks)
 
-    def _eval_predictions(self, predictions, img_ids=None, current_iter=0):
+    def _eval_predictions(self, predictions, img_ids=None):
         """
         Evaluate predictions. Fill self._results with the metrics of the tasks.
         """
-        self.print_current_info = True
-        if self.train_controller:
-            if current_iter % self.print_period != 0: # 不满足打印周期，不输出controller的测试信息
-                self.print_current_info = False
-
         if not self.train_controller:
             self._logger.info("Preparing results for COCO format ...")
         coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))

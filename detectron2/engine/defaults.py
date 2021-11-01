@@ -35,7 +35,7 @@ from detectron2.data import (
 from detectron2.evaluation import (
     DatasetEvaluator,
     inference_on_dataset,
-    controller_inference_one_iter,
+    controller_inference_on_dataset,
     print_csv_format,
     verify_results,
 )
@@ -477,7 +477,7 @@ class DefaultTrainer(TrainerBase):
             assert cfg.MODEL.TASK_DROPOUT_RATE == 0.0, "when train controller, task dropout not conduct"
             assert not cfg.MODEL.IS_OFA, "when train controlelr, of course not OFA"
             assert cfg.MODEL.WEIGHTS == "", "when train controller, no pretrained model" # controller没有pretrained model去load
-            assert cfg.TEST.EVAL_PERIOD == 1, "when train controller, each iter tests on the training data" # training过程中不eval，controller也没法eval
+            assert cfg.TEST.EVAL_PERIOD == 1, "when train controller, each iter tests on the training data" # 必须设为1，这样才能每次都进入到test controller函数里进行evaluator.process()
             # TODO: 需要assert的可能还有别的
             dataset_names = list(cfg.DATASETS.TEST)
             self.evaluator = self.build_evaluator(cfg, dataset_names[0])
@@ -626,19 +626,24 @@ class DefaultTrainer(TrainerBase):
 
         def test_and_save_results(): # 训练controller的时候，就用这个函数来算每个生成结构的性能
             if self.train_controller:
-                if self.iter % cfg.SOLVER.PRINT_PERIOD == 0 or self.iter_in_epoch == 0:
+                if self.iter % cfg.SOLVER.PRINT_PERIOD == 0 or self.iter_in_epoch+1 == self.num_steps_per_epoch:
                     print_time = True
                 else:
                     print_time = False
                 if self.iter_in_epoch == 0:
                     dataset_name = list(cfg.DATASETS.TEST)[0]
-                    self.evaluator = self.build_evaluator(cfg, dataset_name, print_period=cfg.SOLVER.PRINT_PERIOD, train_controller=self.train_controller)
-                self._last_eval_results = self.test_controller(self.cfg, self.teacher_model, self.meta, self.data_for_this_iter, \
-                    self.iter_in_epoch, self.iter, self.epoch, self.evaluator, depths=self._trainer.depth_for_controller, \
-                        ratios=self._trainer.ratio_for_controller, kernel_sizes=self._trainer.kernel_size_for_controller, print_=print_time)
+                    self.evaluator = self.build_evaluator(cfg, dataset_name, train_controller=self.train_controller)
+                self._last_eval_results = self.test_controller(self.cfg, self.meta, self.data_for_this_iter, self.iter_in_epoch, self.iter, self.epoch, self.num_steps_per_epoch, 
+                    self.results_for_this_iter, self.box_cls_for_this_iter, self.targets_for_this_iter, self.output_logits_for_this_iter, self.super_targets_for_this_iter, 
+                    self.evaluator, print_=print_time)
+                # TODO:当一个epoch结束才返回
+                if len(self._last_eval_results) == 0: # 说明处在一个epoch的中间，还没evaluate()
+                    return None
+                else:
+                    return self._last_eval_results
             else:
                 self._last_eval_results = self.test(self.cfg, self.model)
-            return self._last_eval_results
+                return self._last_eval_results
 
         # Do evaluation after checkpointer, because then if it fails,
         # we can use the saved checkpoint to debug.
@@ -685,15 +690,16 @@ class DefaultTrainer(TrainerBase):
     def run_step(self):
         self._trainer.iter = self.iter
         if self.train_controller:
-            # 这个tau是每个epoch重新算一次
-            if self.iter % self.num_steps_per_epoch == 0:
-                self.recompute_tau_and_permutation(epoch=self.iter//self.num_steps_per_epoch)
             self.epoch = self.iter // self.num_steps_per_epoch
             self.iter_in_epoch = self.iter % self.num_steps_per_epoch
+            # 这个tau是每个epoch重新算一次
+            if self.iter_in_epoch == 0:
+                self.recompute_tau_and_permutation(epoch=self.epoch)
             superclass_id = int(self.permutation[self.iter_in_epoch] / self.superclass_loader_len) # 有了这两个值，就能得到对应当前iter的batch data
             data_idx = int(self.permutation[self.iter_in_epoch] % self.superclass_loader_len)
             self.data_for_this_iter = self.input_data[superclass_id][data_idx] # 要把这个数据给test_controller,让它只在这个data上test
-            self._trainer.run_step_controller(tau=self.tau, loss_type=self.loss_type, data=self.data_for_this_iter, superclass_id=superclass_id)
+            self.results_for_this_iter, self.box_cls_for_this_iter, self.targets_for_this_iter, self.output_logits_for_this_iter, self.super_targets_for_this_iter =\
+                self._trainer.run_step_controller(tau=self.tau, loss_type=self.loss_type, data=self.data_for_this_iter, superclass_id=superclass_id)
         else:
             self._trainer.run_step()
 
@@ -888,7 +894,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         return results
 
     @classmethod
-    def test_controller(cls, cfg, model, meta, iter_data, iter_in_epoch, iteration, epoch, evaluators=None, depths=None, ratios=None, kernel_sizes=None, print_=False):
+    def test_controller(cls, cfg, meta, iter_data, iter_in_epoch, iteration, epoch, num_steps_per_epoch, outputs, box_clss, targetss, output_logitss, super_targetss, evaluator=None, print_=False):
         """
         Args:
             cfg (CfgNode):
@@ -903,29 +909,44 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         logger = logging.getLogger(__name__)
         results = OrderedDict()
         dataset_name = list(cfg.DATASETS.TEST)[0]
-        index_to_superclass_name = meta.label_map
+        # index_to_superclass_name = meta.label_map
         # When evaluators are passed in as arguments,
         # implicitly assume that evaluators can be created before data_loader.
 
-        results_i, box_clss, targetss, output_logitss, super_targetss \
-            = controller_inference_one_iter(logger, model, iter_data, iter_in_epoch, iteration, epoch, print_, evaluators, depths=depths, ratios=ratios, kernel_sizes=kernel_sizes)
+        if iter_in_epoch == 0: # 表示新一个epoch开始了
+            evaluator.reset()
+        # if print_:
+        #     logger.info("Inference epoch:{}/{} iter:{} ".format(epoch+1, iter_in_epoch, iteration))
 
-        results[dataset_name] = results_i
-        if comm.is_main_process():
-            assert isinstance(
-                results_i, dict
-            ), "Evaluator must return a dict on the main process. Got {} instead.".format(
-                results_i
-            )
-            if print_:
-                mAP = print_csv_format(results_i, only_mAP=True)
-                logger.info("mAP: {}".format(mAP))
-        if print_:
-            print_acc_info(logger, box_clss, targetss, output_logitss, super_targetss, n_superclass=cfg.DATASETS.SUPERCLASS_NUM, \
-                index_to_superclass_name=index_to_superclass_name, only_total_acc=True)
-            
-
+        inputs, super_targets_idxs, super_targets = iter_data
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        evaluator.process(inputs, outputs)
         
+        # controller_inference_on_dataset()如下
+        if iter_in_epoch+1==num_steps_per_epoch and hasattr(evaluator, "_predictions") and len(evaluator._predictions)>0:
+            results_whole_epoch = evaluator.evaluate()
+        else:
+            results_whole_epoch = None
+
+        if results_whole_epoch is not None:
+            results[dataset_name] = results_whole_epoch
+            if comm.is_main_process():
+                assert isinstance(
+                    results_whole_epoch, dict
+                ), "Evaluator must return a dict on the main process. Got {} instead.".format(
+                    results_whole_epoch
+                )
+                if print_:
+                    AP_names, AP_results = print_csv_format(results_whole_epoch, only_AP=True)
+                    msg = ""
+                    for (name, ap) in zip(AP_names, AP_results):
+                        msg = msg + "{}={} ".format(name, ap)
+                    logger.info("Inference epoch-{}: {}".format(epoch+1, msg))
+        # if print_: # acc很低，不打印了
+        #     print_acc_info(logger, box_clss, targetss, output_logitss, super_targetss, n_superclass=cfg.DATASETS.SUPERCLASS_NUM, \
+        #         index_to_superclass_name=index_to_superclass_name, only_total_acc=True)
+
         if len(results) == 1:
             results = list(results.values())[0]
         return results

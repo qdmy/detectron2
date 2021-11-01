@@ -50,7 +50,7 @@ class Trainer(DefaultTrainer):
     """
 
     @classmethod
-    def build_evaluator(cls, cfg, dataset_name, output_folder=None, print_period=0, train_controller=False):
+    def build_evaluator(cls, cfg, dataset_name, output_folder=None, train_controller=False):
         """
         Create evaluator(s) for a given dataset.
         This uses the special metadata "evaluator_type" associated with each builtin dataset.
@@ -70,7 +70,7 @@ class Trainer(DefaultTrainer):
                 )
             )
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
-            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder, print_period=print_period, train_controller=train_controller))
+            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder, train_controller=train_controller))
         if evaluator_type == "coco_panoptic_seg":
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
         if evaluator_type == "cityscapes_instance":

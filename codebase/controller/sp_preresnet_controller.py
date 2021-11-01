@@ -87,7 +87,7 @@ class PreResNetController(nn.Module):
                 hx, cx = self.lstm(embed, hidden)
                 hidden = (hx, cx)
                 logits = self.width_linear(hx)
-            probs = F.sigmoid(logits)
+            probs = torch.sigmoid(logits)
             one_indicator = probs.new_ones(probs.shape[0], 1)
             if self.training:
                 # right_indicator = BernoulliSample.apply(probs)

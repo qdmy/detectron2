@@ -393,7 +393,7 @@ class EvalHook(HookBase):
         if self._period > 0 and next_iter % self._period == 0:
             results = self._func()
             # do the last eval in after_train
-            if next_iter != self.trainer.max_iter:
+            if next_iter != self.trainer.max_iter and results is not None:
                 # if self.many_subnets:
                 #     self._do_many_subnets_eval(results)
                 # else:
@@ -406,7 +406,8 @@ class EvalHook(HookBase):
             # if self.many_subnets:
             #     self._do_many_subnets_eval(results)
             # else:
-            self._do_eval(results)
+            if results is not None:
+                self._do_eval(results)
         # func is likely a closure that holds reference to the trainer
         # therefore we clean it to avoid circular reference in the end
         del self._func

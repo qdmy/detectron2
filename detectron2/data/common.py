@@ -179,8 +179,8 @@ class DatasetFromList(data.Dataset):
                         images_part.append([start, end])
                     self.targets_per_superclass.append(targets)
                     self.images_part_per_superclass.append(images_part)
-                self.targets_per_superclass = np.array(self.targets_per_superclass)
-                self.images_part_per_superclass = np.array(self.images_part_per_superclass)
+                self.targets_per_superclass = np.array(self.targets_per_superclass, dtype=object)
+                self.images_part_per_superclass = np.array(self.images_part_per_superclass, dtype=object)
 
             # 这里获取的targets已经是0-80的label了，不需要映射了
             # self.category_ids = self.targets
@@ -208,7 +208,7 @@ class DatasetFromList(data.Dataset):
                 self.super_targets_per_superclass = [] # inference需要这个量
                 for i in self.targets_per_superclass:
                     self.super_targets_per_superclass.append(self.class_to_superclass[i])
-                self.super_targets_per_superclass = np.array(self.super_targets_per_superclass)
+                self.super_targets_per_superclass = np.array(self.super_targets_per_superclass, dtype=object)
 
             self.n_superclass = len(class_ranges)
 
@@ -245,8 +245,8 @@ class DatasetFromList(data.Dataset):
                 self.superclass_masks = np.vstack(self.superclass_masks)
 
                 self.superclass_masks = np.array(self.superclass_masks)
-                self.superclass_samples_indices = np.array(self.superclass_samples_indices)
-                self.super_targets_idxes_per_superclass = np.array(self.super_targets_idxes_per_superclass)
+                self.superclass_samples_indices = np.array(self.superclass_samples_indices, dtype=object)
+                self.super_targets_idxes_per_superclass = np.array(self.super_targets_idxes_per_superclass, dtype=object)
 
             else:
                 self.super_targets_masks = (self.super_targets.reshape(-1, 1) == self.class_to_superclass).astype("single")
