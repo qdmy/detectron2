@@ -205,7 +205,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
         )
 
     imgs_anns = list(zip(imgs, anns))
-    logger.info("Loaded {} images in COCO format from {}".format(len(imgs_anns), json_file))
+    # logger.info("Loaded {} images in COCO format from {}".format(len(imgs_anns), json_file))
 
     dataset_dicts = []
 
@@ -299,6 +299,8 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
         if debug and len(dataset_dicts) == length_to_debug:
             break
+        
+    logger.info("Loaded {} images in {}, Left {} images containing selected class objects.".format(len(imgs_anns), json_file, len(dataset_dicts)))
 
     if num_instances_without_valid_segmentation > 0:
         logger.warning(

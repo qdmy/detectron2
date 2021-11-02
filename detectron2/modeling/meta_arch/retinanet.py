@@ -765,7 +765,7 @@ class RetinaNet(nn.Module):
         #     self.superclass_accuracy_metric.update(final_output_logits, final_targets, final_super_targets)
 
         if self.task_dropout:
-            return result, final_box_cls, final_targets, final_output_logits, final_super_targets
+            return result, final_box_cls[keep], final_targets[keep], final_output_logits[keep], final_super_targets[keep]
         else:
             return result
 

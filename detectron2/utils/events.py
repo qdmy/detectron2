@@ -221,7 +221,7 @@ class CommonMetricPrinter(EventWriter):
             return eta_string
 
     def write(self):
-        storage = get_event_storage()
+        storage = get_event_storage() # debug时进这里看看，里面的数据哪来的
         iteration = storage.iter
         if iteration == self._max_iter:
             # This hook only reports training progress (loss, ETA, etc) but not other data,
@@ -240,7 +240,7 @@ class CommonMetricPrinter(EventWriter):
         except KeyError:
             iter_time = None
         try:
-            lr = "{:.5g}".format(storage.history("lr").latest())
+            lr = "{:.5g}".format(storage.history("lr").latest()) # TODO: 为什么没有lr呢，注意这个类名，是哪里调用的这里？
         except KeyError:
             lr = "N/A"
 

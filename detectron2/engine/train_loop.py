@@ -403,10 +403,10 @@ class SimpleTrainer(TrainerBase):
         if self.multi_path_mbv3:
             depths, ratios, ks, depths_wbs, depths_probs, ratio_wbs, ratios_probs, ks_wbs, ks_probs \
                 = self.model([constraint], superclass_id, tau)
-            # 保留下来传给test
-            self.depth_for_controller = depths_probs
-            self.ratio_for_controller = ratios_probs
-            self.kernel_size_for_controller = ks_probs
+            # # 保留下来传给test
+            # self.depth_for_controller = depths_probs
+            # self.ratio_for_controller = ratios_probs
+            # self.kernel_size_for_controller = ks_probs
 
             # TODO: 这里同时得到了loss和inference的结果，怎么展示，想想怎么test，多久test一次。test应该用的是这里一样的data，要重写个test controller函数吗？
             teacher_loss, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = \
@@ -430,10 +430,10 @@ class SimpleTrainer(TrainerBase):
         else:
             _, _, _, depth_cum_indicators, ratio_cum_indicators, kernel_cum_size_indicators \
                 = self.model([constraint], superclass_id)
-            # 保留下来传给test
-            self.depth_for_controller = depth_cum_indicators
-            self.ratio_for_controller = ratio_cum_indicators
-            self.kernel_size_for_controller = kernel_cum_size_indicators
+            # # 保留下来传给test
+            # self.depth_for_controller = depth_cum_indicators
+            # self.ratio_for_controller = ratio_cum_indicators
+            # self.kernel_size_for_controller = kernel_cum_size_indicators
 
             teacher_loss, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = \
                 self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depth_cum_indicators, \

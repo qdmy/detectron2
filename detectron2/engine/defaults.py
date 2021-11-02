@@ -530,6 +530,7 @@ class DefaultTrainer(TrainerBase):
             self.num_steps_per_epoch = num_superclass * self.superclass_loader_len # 即原本的loader_len
             self.recompute_tau_and_permutation(epoch=0) # 初始化tau和permutation
             self.meta = meta
+            self.img_ids_controller_used = []
         else:
             data_loader = self.build_train_loader(cfg)
             teacher_pretrained = cfg.MODEL.OFA_MOBILENETV3.teacher
@@ -604,7 +605,7 @@ class DefaultTrainer(TrainerBase):
 
         ret = [
             hooks.IterationTimer(),
-            hooks.LRScheduler() if not self.train_controller else None,
+            hooks.LRScheduler(), # if not self.train_controller else None, # train controller时如果设为None，打印的log就没有lr信息
             hooks.PreciseBN( # 这里实现的是训练时计算准确BN的功能，但是graphnas里是要在测试时去做
                 # Run at the same freq as (but before) evaluation.
                 cfg.TEST.EVAL_PERIOD,
@@ -633,10 +634,11 @@ class DefaultTrainer(TrainerBase):
                 if self.iter_in_epoch == 0:
                     dataset_name = list(cfg.DATASETS.TEST)[0]
                     self.evaluator = self.build_evaluator(cfg, dataset_name, train_controller=self.train_controller)
+                    self.img_ids_controller_used = []
                 self._last_eval_results = self.test_controller(self.cfg, self.meta, self.data_for_this_iter, self.iter_in_epoch, self.iter, self.epoch, self.num_steps_per_epoch, 
                     self.results_for_this_iter, self.box_cls_for_this_iter, self.targets_for_this_iter, self.output_logits_for_this_iter, self.super_targets_for_this_iter, 
-                    self.evaluator, print_=print_time)
-                # TODO:当一个epoch结束才返回
+                    self.evaluator, print_=print_time, img_ids_controller_used=self.img_ids_controller_used)
+
                 if len(self._last_eval_results) == 0: # 说明处在一个epoch的中间，还没evaluate()
                     return None
                 else:
@@ -894,7 +896,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         return results
 
     @classmethod
-    def test_controller(cls, cfg, meta, iter_data, iter_in_epoch, iteration, epoch, num_steps_per_epoch, outputs, box_clss, targetss, output_logitss, super_targetss, evaluator=None, print_=False):
+    def test_controller(cls, cfg, meta, iter_data, iter_in_epoch, iteration, epoch, num_steps_per_epoch, outputs, box_clss, targetss, output_logitss, super_targetss, evaluator=None, print_=False, img_ids_controller_used=[]):
         """
         Args:
             cfg (CfgNode):
@@ -922,10 +924,10 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         evaluator.process(inputs, outputs)
-        
+        for img in inputs: img_ids_controller_used.append(img['image_id'])
         # controller_inference_on_dataset()如下
         if iter_in_epoch+1==num_steps_per_epoch and hasattr(evaluator, "_predictions") and len(evaluator._predictions)>0:
-            results_whole_epoch = evaluator.evaluate()
+            results_whole_epoch = evaluator.evaluate(img_ids=img_ids_controller_used)
         else:
             results_whole_epoch = None
 

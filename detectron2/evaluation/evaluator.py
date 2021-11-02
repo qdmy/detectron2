@@ -178,7 +178,7 @@ class DatasetEvaluators(DatasetEvaluator):
         return results
 
 def inference_subnet_on_dataset(
-    model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], subnet_name="name of a subset"
+    model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], subnet_name="name of a subset", 
 ):
     """
     inference on one subset
@@ -207,7 +207,7 @@ def inference_subnet_on_dataset(
 
     total = len(data_loader)  # inference data loader must have a fixed length
     evaluator.reset()
-
+    img_ids_used= [] # 得到所用的图片的id，只在这些上面evaluate
     num_warmup = min(5, total - 1)
     start_time = time.perf_counter()
     total_compute_time = 0
@@ -230,7 +230,7 @@ def inference_subnet_on_dataset(
                 torch.cuda.synchronize()
             total_compute_time += time.perf_counter() - start_compute_time
             evaluator.process(inputs, outputs)
-
+            for img in inputs: img_ids_used.append(img['image_id']) # 保存所有用到的图片
             iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)
             seconds_per_iter = total_compute_time / iters_after_start
             if idx >= num_warmup * 2 or seconds_per_iter > 5:
@@ -260,7 +260,7 @@ def inference_subnet_on_dataset(
         )
     )
 
-    results = evaluator.evaluate()
+    results = evaluator.evaluate(img_ids=img_ids_used)
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle
     if results is None:
@@ -302,7 +302,7 @@ def inference_on_dataset(
     if isinstance(evaluator, abc.MutableSequence):
         evaluator = DatasetEvaluators(evaluator)
     evaluator.reset()
-
+    img_ids_used = [] # 得到所用的图片的id，只在这些上面evaluate
     if bn_subset_loader is not None:
         subnet_settings = []
         if hasattr(model, "module"):
@@ -380,7 +380,7 @@ def inference_on_dataset(
                     torch.cuda.synchronize()
                 total_compute_time += time.perf_counter() - start_compute_time
                 evaluator.process(inputs, outputs)
-
+                for img in inputs: img_ids_used.append(img['image_id']) # 保存所有用到的图片
                 iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)
                 seconds_per_iter = total_compute_time / iters_after_start
                 if idx >= num_warmup * 2 or seconds_per_iter > 5:
@@ -410,7 +410,7 @@ def inference_on_dataset(
             )
         )
 
-        results = evaluator.evaluate()
+        results = evaluator.evaluate(img_ids=img_ids_used)
         # An evaluator may return None when not in main process.
         # Replace it by an empty dict instead to make it easier for downstream code to handle
         if results is None:

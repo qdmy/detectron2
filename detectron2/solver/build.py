@@ -115,6 +115,11 @@ def build_optimizer(cfg: CfgNode, model: torch.nn.Module, train_controller=False
     Build an optimizer from config.
     """
     if train_controller:
+        # return maybe_add_gradient_clipping(cfg, torch.optim.Adam)(
+        #     model.parameters(),
+        #     lr=cfg.SOLVER.CONTROLLER.BASE_LR,
+        #     weight_decay=cfg.SOLVER.CONTROLLER.WEIGHT_DECAY,
+        # )
         params = get_default_optimizer_params(
             model,
             base_lr=cfg.SOLVER.CONTROLLER.BASE_LR,

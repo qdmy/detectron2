@@ -250,7 +250,8 @@ class LRScheduler(HookBase):
     def after_step(self):
         lr = self._optimizer.param_groups[self._best_param_group_id]["lr"]
         self.trainer.storage.put_scalar("lr", lr, smoothing_hint=False)
-        self.scheduler.step()
+        if self.scheduler is not None: # 只有当train controller的时候，才会是None
+            self.scheduler.step()
 
     @property
     def scheduler(self):

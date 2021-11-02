@@ -123,7 +123,7 @@ class COCOEvaluator(DatasetEvaluator):
         if self._do_evaluation:
             self._kpt_oks_sigmas = kpt_oks_sigmas
 
-        self.task_dropout = True if 'task_dropout' in dataset_name else False
+        self.task_dropout = True if 'task_dropout' in dataset_name or self.train_controller else False
 
     def reset(self):
         self._predictions = []
@@ -236,7 +236,12 @@ class COCOEvaluator(DatasetEvaluator):
                     "unofficial" if self._use_fast_impl else "official"
                 )
             )
-
+        # 得到用到了那些类别
+        if hasattr(self._metadata, "thing_dataset_id_to_contiguous_id"):
+            continue_id_to_thing_dataset_id = {v: k for k, v in self._metadata.thing_dataset_id_to_contiguous_id.items()}
+            cat_ids = [continue_id_to_thing_dataset_id[k] for k in self._metadata.class_to_superclass_idx.keys()]
+        else:
+            cat_ids = None
         for task in sorted(tasks):
             assert task in {"bbox", "segm", "keypoints"}, f"Got unknown task: {task}!"
             coco_eval = (
@@ -246,7 +251,7 @@ class COCOEvaluator(DatasetEvaluator):
                     task,
                     kpt_oks_sigmas=self._kpt_oks_sigmas,
                     use_fast_impl=self._use_fast_impl,
-                    img_ids=img_ids,
+                    img_ids=img_ids, cat_ids=cat_ids,
                     task_dropout=self.task_dropout,
                     superclass_idx=list(self._metadata.class_to_superclass_idx.keys()) if self.task_dropout else None,
                     train_controller=self.train_controller,
@@ -594,7 +599,7 @@ def _evaluate_box_proposals(dataset_predictions, coco_api, thresholds=None, area
 
 
 def _evaluate_predictions_on_coco(
-    coco_gt, coco_results, iou_type, kpt_oks_sigmas=None, use_fast_impl=True, img_ids=None, task_dropout=False, superclass_idx=None, train_controller=False
+    coco_gt, coco_results, iou_type, kpt_oks_sigmas=None, use_fast_impl=True, img_ids=None, cat_ids=None, task_dropout=False, superclass_idx=None, train_controller=False
 ):
     """
     Evaluate the coco results using COCOEval API.
@@ -614,6 +619,8 @@ def _evaluate_predictions_on_coco(
     coco_eval = (COCOeval_opt if use_fast_impl else COCOeval)(coco_gt, coco_dt, iou_type, train_controller=train_controller)
     if img_ids is not None:
         coco_eval.params.imgIds = img_ids
+    if cat_ids is not None: # 指定：只在这些类别上evaluate
+        coco_eval.params.catIds = cat_ids
 
     if iou_type == "keypoints":
         # Use the COCO default keypoint OKS sigmas unless overrides are specified
@@ -635,16 +642,16 @@ def _evaluate_predictions_on_coco(
 
     coco_eval.evaluate()
     coco_eval.accumulate()
-
-    # accumulate之后，就得到了eval的结果，然后如果task dropout，则需要选出只55类的结果，再去summarize
-    if task_dropout:
-        assert superclass_idx is not None, "when task dropout, need to filter out a subset result"
-        coco_eval.eval['counts'][2] = len(superclass_idx)
-        # dimension of precision: [TxRxKxAxM]
-        coco_eval.eval['precision'] = coco_eval.eval['precision'][:,:,superclass_idx,:,:]
-        # dimension of recall: [TxKxAxM]
-        coco_eval.eval['recall'] = coco_eval.eval['recall'][:,superclass_idx,:,:]
-        coco_eval.eval['scores'] = coco_eval.eval['scores'][:,:,superclass_idx,:,:]
+    # 上面已经指定了在CatIDs上eval，所以这里就不需要了
+    # # accumulate之后，就得到了eval的结果，然后如果task dropout，则需要选出只55类的结果，再去summarize
+    # if task_dropout:
+    #     assert superclass_idx is not None, "when task dropout, need to filter out a subset result"
+    #     coco_eval.eval['counts'][2] = len(superclass_idx)
+    #     # dimension of precision: [TxRxKxAxM]
+    #     coco_eval.eval['precision'] = coco_eval.eval['precision'][:,:,superclass_idx,:,:]
+    #     # dimension of recall: [TxKxAxM]
+    #     coco_eval.eval['recall'] = coco_eval.eval['recall'][:,superclass_idx,:,:]
+    #     coco_eval.eval['scores'] = coco_eval.eval['scores'][:,:,superclass_idx,:,:]
     coco_eval.summarize()
 
     return coco_eval
