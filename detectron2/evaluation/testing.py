@@ -24,7 +24,9 @@ def print_csv_format(results, only_AP=False):
                 important_res = [(k, v) for k, v in res.items() if "-" not in k]
                 AP_names = [k[0] for k in important_res]
                 AP_results = ["{0:.4f}".format(k[1]) for k in important_res]
-        return AP_names, AP_results
+
+                superclass_mAP = [(k, "{0:.4f}".format(v)) for k, v in res.items() if "super" in k]
+        return AP_names, AP_results, superclass_mAP
     else:
         for task, res in results.items():
             if isinstance(res, Mapping):

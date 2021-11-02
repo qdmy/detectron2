@@ -252,14 +252,15 @@ class SimpleTrainer(TrainerBase):
         If you want your model (or a submodule of it) to behave
         like evaluation during training, you can overwrite its train() method.
         """
-        model.train()
+        if model is not None:
+            model.train() 
         if teacher_model is not None and train_controller:
             teacher_model.eval()
         self.train_controller = train_controller
         self.model = model
         self.teacher_model = teacher_model
         self.data_loader = data_loader
-        if not self.train_controller:
+        if not self.train_controller and data_loader is not None:
             self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer
         self.task_dropout = task_dropout

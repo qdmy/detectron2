@@ -1,0 +1,17 @@
+_BASE_: "../Base-RetinaNet.yaml"
+MODEL:
+  BUILD_ACC_DATASET:
+    ENABLED: True
+  IS_OFA: True
+  BACKBONE:
+    NAME: "build_retinanet_ofa_mbv3_fpn_backbone"
+    FREEZE_AT: 10 # correspond to freeze at 2 in resnet
+  TEACHER_BACKBONE:
+    NAME: "build_retinanet_mbv3_fpn_backbone"
+  FPN:
+    IN_FEATURES: ["res2", "res4", "res5"]
+    USE_RELU: True
+DATASETS:
+  TRAIN: ("coco_2017_train_task_dropout_50",)
+  TEST: ("coco_2017_val_task_dropout_50",)
+OUTPUT_DIR: output/coco-detection/build_acc_dataset/debug

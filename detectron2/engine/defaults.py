@@ -460,7 +460,7 @@ class DefaultTrainer(TrainerBase):
         cfg (CfgNode):
     """
 
-    def __init__(self, cfg, resume=False):
+    def __init__(self, cfg, resume=False, build_acc_dset=False):
         """
         Args:
             cfg (CfgNode):
@@ -502,7 +502,11 @@ class DefaultTrainer(TrainerBase):
         # 当训练controller时，optimizer，之类的，都跟graphnas代码里的一致
         # model, optimizer, scheduler, etc，都要根据controller来对应创建
         model, teacher_model = self.build_model(cfg, train_controller=self.train_controller)
-        optimizer = self.build_optimizer(cfg, model, train_controller=self.train_controller)
+        if build_acc_dset:
+            assert self.task_dropout, "when build acc dataset, task dropout needs to be true for some dataloader"
+            assert teacher_model is None, "when build acc dataset, no need for teacher"
+        else: # build acc dataset的时候不需要build optimizer
+            optimizer = self.build_optimizer(cfg, model, train_controller=self.train_controller)
 
         # TODO: 还有train的流程，怎么在其中穿插进去teacher model的eval，如何计算loss，都是要改的
 
@@ -531,7 +535,7 @@ class DefaultTrainer(TrainerBase):
             self.recompute_tau_and_permutation(epoch=0) # 初始化tau和permutation
             self.meta = meta
             self.img_ids_controller_used = []
-        else:
+        elif not build_acc_dset:
             data_loader = self.build_train_loader(cfg)
             teacher_pretrained = cfg.MODEL.OFA_MOBILENETV3.teacher
             num_class_per_superclass = 0
@@ -542,32 +546,42 @@ class DefaultTrainer(TrainerBase):
                 model = sort_channels(model)
             teacher_model = create_ddp_model(teacher_model, broadcast_buffers=False, find_unused_parameters=True)
             DetectionCheckpointer(teacher_model, is_ofa=False).resume_or_load(teacher_pretrained) # 这里就load了teacher model
-        self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
-            model, data_loader, optimizer, task_dropout=self.task_dropout, 
-            teacher_model=teacher_model, kd_ratio=cfg.MODEL.OFA_MOBILENETV3.KD_RATIO,
-            num_sampled_subset=cfg.MODEL.OFA_MOBILENETV3.DYNAMIC_BATCH_SIZE,
-            train_controller=self.train_controller, num_class_per_superclass=num_class_per_superclass,
-            multi_path_mbv3=self.multi_path_mbv3, loss_lambda=self.loss_lambda, 
-        )
+        if not build_acc_dset:
+            self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
+                model, data_loader, optimizer, task_dropout=self.task_dropout, 
+                teacher_model=teacher_model, kd_ratio=cfg.MODEL.OFA_MOBILENETV3.KD_RATIO,
+                num_sampled_subset=cfg.MODEL.OFA_MOBILENETV3.DYNAMIC_BATCH_SIZE,
+                train_controller=self.train_controller, num_class_per_superclass=num_class_per_superclass,
+                multi_path_mbv3=self.multi_path_mbv3, loss_lambda=self.loss_lambda, 
+            )
 
-        self.scheduler = self.build_lr_scheduler(cfg, optimizer, train_controller=self.train_controller)
+            self.scheduler = self.build_lr_scheduler(cfg, optimizer, train_controller=self.train_controller)
 
-        self.checkpointer = DetectionCheckpointer(
-            # Assume you want to save checkpoints together with logs/statistics
-            model,
-            cfg.OUTPUT_DIR,
-            is_ofa=cfg.MODEL.IS_OFA,
-            resume=resume,
-            trainer=weakref.proxy(self),
-        )
-        self.start_iter = 0
-        if self.train_controller:
-            self.max_iter = self.num_steps_per_epoch * cfg.MODEL.CONTROLLER.MAX_EPOCHS # 训controller的时候，每个iter就是一个epoch，每个epoch多少个iter是由数据集长度决定的
-            # assert self.max_iter % self.num_steps_per_epoch == 0, "total iters should be times of loader_len"
-        else:
-            self.max_iter = cfg.SOLVER.MAX_ITER
+            self.checkpointer = DetectionCheckpointer(
+                # Assume you want to save checkpoints together with logs/statistics
+                model,
+                cfg.OUTPUT_DIR,
+                is_ofa=cfg.MODEL.IS_OFA,
+                resume=resume,
+                trainer=weakref.proxy(self),
+            )
+            self.start_iter = 0
+            if self.train_controller:
+                self.max_iter = self.num_steps_per_epoch * cfg.MODEL.CONTROLLER.MAX_EPOCHS # 训controller的时候，每个iter就是一个epoch，每个epoch多少个iter是由数据集长度决定的
+                # assert self.max_iter % self.num_steps_per_epoch == 0, "total iters should be times of loader_len"
+            else:
+                self.max_iter = cfg.SOLVER.MAX_ITER
 
-        self.register_hooks(self.build_hooks())
+            self.register_hooks(self.build_hooks())
+        else: # for build acc dataset
+            DetectionCheckpointer(model, is_ofa=True).resume_or_load(cfg.MODEL.BUILD_ACC_DATASET.OFA_CKPT) # load ofa model
+            self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(model, data_loader=None, optimizer=None) # 为了下面的attr检查，实际上是没用的
+            model.eval()
+            dataset_name = cfg.DATASETS.TEST[0]
+            self.data_loader, self.meta, class_ranges = self.build_test_loader(cfg, dataset_name, task_dropout=self.task_dropout)
+            self.bn_subset_loader = self.build_bn_subset_loader(cfg)
+            self.evaluator = self.build_evaluator(cfg, dataset_name)
+            self.num_superclass = len(class_ranges)
 
     def resume_or_load(self, resume=True):
         """
@@ -635,7 +649,7 @@ class DefaultTrainer(TrainerBase):
                     dataset_name = list(cfg.DATASETS.TEST)[0]
                     self.evaluator = self.build_evaluator(cfg, dataset_name, train_controller=self.train_controller)
                     self.img_ids_controller_used = []
-                self._last_eval_results = self.test_controller(self.cfg, self.meta, self.data_for_this_iter, self.iter_in_epoch, self.iter, self.epoch, self.num_steps_per_epoch, 
+                self._last_eval_results = self.test_controller(self.cfg, self.meta, self.data_for_this_iter, self.iter_in_epoch, self.iter, self.max_iter, self.epoch, self.num_steps_per_epoch, 
                     self.results_for_this_iter, self.box_cls_for_this_iter, self.targets_for_this_iter, self.output_logits_for_this_iter, self.super_targets_for_this_iter, 
                     self.evaluator, print_=print_time, img_ids_controller_used=self.img_ids_controller_used)
 
@@ -816,7 +830,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                 task_dropout = True
             else:
                 task_dropout = False
-            data_loader, meta = cls.build_test_loader(cfg, dataset_name, task_dropout=task_dropout)
+            data_loader, meta, class_ranges = cls.build_test_loader(cfg, dataset_name, task_dropout=task_dropout)
             if cfg.MODEL.OFA_MOBILENETV3.train: # 训controller的时候这个是false的
                 bn_subset_loader = cls.build_bn_subset_loader(cfg)
             else:
@@ -896,7 +910,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         return results
 
     @classmethod
-    def test_controller(cls, cfg, meta, iter_data, iter_in_epoch, iteration, epoch, num_steps_per_epoch, outputs, box_clss, targetss, output_logitss, super_targetss, evaluator=None, print_=False, img_ids_controller_used=[]):
+    def test_controller(cls, cfg, meta, iter_data, iter_in_epoch, iteration, max_iter, epoch, num_steps_per_epoch, outputs, box_clss, targetss, output_logitss, super_targetss, evaluator=None, print_=False, img_ids_controller_used=[]):
         """
         Args:
             cfg (CfgNode):
@@ -926,7 +940,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         evaluator.process(inputs, outputs)
         for img in inputs: img_ids_controller_used.append(img['image_id'])
         # controller_inference_on_dataset()如下
-        if iter_in_epoch+1==num_steps_per_epoch and hasattr(evaluator, "_predictions") and len(evaluator._predictions)>0:
+        if iter_in_epoch+1==num_steps_per_epoch and hasattr(evaluator, "_predictions") and len(evaluator._predictions)>0 and iteration < max_iter: # 最后一个条件是为了避免最后训完了还要再测一次
             results_whole_epoch = evaluator.evaluate(img_ids=img_ids_controller_used)
         else:
             results_whole_epoch = None
@@ -940,7 +954,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     results_whole_epoch
                 )
                 if print_:
-                    AP_names, AP_results = print_csv_format(results_whole_epoch, only_AP=True)
+                    AP_names, AP_results, superclass_mAP = print_csv_format(results_whole_epoch, only_AP=True)
                     msg = ""
                     for (name, ap) in zip(AP_names, AP_results):
                         msg = msg + "{}={} ".format(name, ap)

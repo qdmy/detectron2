@@ -541,6 +541,15 @@ _C.MODEL.OFA_MOBILENETV3.EXPAND_LIST = [3, 4, 6]
 _C.MODEL.OFA_MOBILENETV3.DEPTH_LIST = [2, 3, 4]
 
 # ---------------------------------------------------------------------------- #
+# build acc dataset by OFA_MobileNetV3
+# ---------------------------------------------------------------------------- #
+_C.MODEL.BUILD_ACC_DATASET = CN({"ENABLED": False})
+_C.MODEL.BUILD_ACC_DATASET.RESUME = ""
+_C.MODEL.BUILD_ACC_DATASET.N_ARCH = 16000
+_C.MODEL.BUILD_ACC_DATASET.ALL_TASKS = False 
+_C.MODEL.BUILD_ACC_DATASET.OFA_CKPT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0-no-kd/model_final.pth"
+
+# ---------------------------------------------------------------------------- #
 # MP_OFA_MobileNetV3
 # ---------------------------------------------------------------------------- #
 _C.MODEL.MP_OFA_MOBILENETV3 = CN()
