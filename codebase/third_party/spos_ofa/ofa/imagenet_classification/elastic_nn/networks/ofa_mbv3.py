@@ -394,7 +394,7 @@ class OFAMobileNetV3(MobileNetV3):
 
 	def get_active_net_config(self):
 		# first conv
-		first_conv_config = self.first_conv.config
+		first_conv_config = self.first_conv[0].config # 加[0]是因为我把first_conv给nn.Sequential了
 		first_block_config = self.blocks[0].config
 		# final_expand_config = self.final_expand_layer.config
 		# feature_mix_layer_config = self.feature_mix_layer.config

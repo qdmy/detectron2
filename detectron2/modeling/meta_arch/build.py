@@ -119,14 +119,17 @@ def sigmoid_focal_loss_task_dropout(
     return loss #, final_logits
 
 
-def build_model(cfg, train_controller=False):
+def build_model(cfg, train_controller=False, generate_arch=False):
     """
     Build the whole model architecture, defined by ``cfg.MODEL.META_ARCHITECTURE``.
     Note that it does not load any weights from ``cfg``.
     """
     if train_controller:
         meta_arch = cfg.MODEL.CONTROLLER.NAME
-        teacher_meta_arch = cfg.MODEL.CONTROLLER.TEACHER.META_ARCHITECTURE
+        if generate_arch:
+            teacher_meta_arch = cfg.MODEL.META_ARCHITECTURE
+        else:
+            teacher_meta_arch = cfg.MODEL.CONTROLLER.TEACHER.META_ARCHITECTURE
     else:
         meta_arch = cfg.MODEL.META_ARCHITECTURE
         teacher_meta_arch = meta_arch
@@ -134,9 +137,12 @@ def build_model(cfg, train_controller=False):
     model = META_ARCH_REGISTRY.get(meta_arch)(cfg)
     if train_controller:
         create_teacher = True
-        teacher_model = META_ARCH_REGISTRY.get(teacher_meta_arch)(cfg, create_teacher, train_controller=train_controller)
+        if generate_arch:
+            teacher_model = META_ARCH_REGISTRY.get(teacher_meta_arch)(cfg, create_teacher, generate_arch=True)
+        else:
+            teacher_model = META_ARCH_REGISTRY.get(teacher_meta_arch)(cfg, create_teacher, train_controller=train_controller)
     elif cfg.MODEL.OFA_MOBILENETV3.train:
-        create_teacher =True
+        create_teacher = True
         teacher_model = META_ARCH_REGISTRY.get(teacher_meta_arch)(cfg, create_teacher)
     else:
         teacher_model = None

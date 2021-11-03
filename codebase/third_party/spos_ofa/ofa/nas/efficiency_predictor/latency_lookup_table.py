@@ -332,23 +332,23 @@ class MBv3LatencyTable(LatencyTable):
 			# print(f"Block: {block_flops}")
 			# print(
 			# 	f"in_channels: {mb_conv['in_channels']}, mid_channels: {mb_conv['mid_channels']}, out_channels: {mb_conv['out_channels']}, kernel_size: {mb_conv['kernel_size']}, stride: {mb_conv['stride']}, img size: {out_fz}")
-		# final expand layer
-		layer_flops = count_conv_flop(fsize, net_config['final_expand_layer']['in_channels'],
-		                         net_config['final_expand_layer']['out_channels'], 1, 1)
-		flops += layer_flops
-		# print(f"Final expand layer: {layer_flops}")
+		# # final expand layer
+		# layer_flops = count_conv_flop(fsize, net_config['final_expand_layer']['in_channels'],
+		#                          net_config['final_expand_layer']['out_channels'], 1, 1)
+		# flops += layer_flops
+		# # print(f"Final expand layer: {layer_flops}")
 
-		# feature mix layer
-		layer_flops = count_conv_flop(1, net_config['feature_mix_layer']['in_channels'],
-		                         net_config['feature_mix_layer']['out_channels'], 1, 1)
-		flops += layer_flops
-		# print(f"Feature mix layer: {layer_flops}")
+		# # feature mix layer
+		# layer_flops = count_conv_flop(1, net_config['feature_mix_layer']['in_channels'],
+		#                          net_config['feature_mix_layer']['out_channels'], 1, 1)
+		# flops += layer_flops
+		# # print(f"Feature mix layer: {layer_flops}")
 
-		# classifier
-		layer_flops = count_conv_flop(1, net_config['classifier']['in_features'],
-		                         num_classes_per_superclass, 1, 1)
-		flops += layer_flops
-		# print(f"Classifier: {layer_flops}")
+		# # classifier
+		# layer_flops = count_conv_flop(1, net_config['classifier']['in_features'],
+		#                          num_classes_per_superclass, 1, 1)
+		# flops += layer_flops
+		# # print(f"Classifier: {layer_flops}")
 		return flops / 1e6  # MFLOPs
 
 

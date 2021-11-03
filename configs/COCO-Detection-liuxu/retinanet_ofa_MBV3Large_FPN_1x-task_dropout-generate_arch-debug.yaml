@@ -1,8 +1,10 @@
 _BASE_: "../Base-RetinaNet.yaml"
 MODEL:
-  BUILD_ACC_DATASET:
+  GENERATOR_ARCH:
     ENABLED: True
-  IS_OFA: True
+    TYPE: "SP" # SP or MP, but MP is not supported
+    TEST_INTERVAL: 50
+    CONTROLLER_CKPT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/controller/retinanet_controller_MBV3Large_FPN_1x_SP_run2/model_0029999.pth"
   BACKBONE:
     NAME: "build_retinanet_ofa_mbv3_fpn_backbone"
     FREEZE_AT: 10 # correspond to freeze at 2 in resnet
@@ -12,4 +14,4 @@ MODEL:
 DATASETS:
   TRAIN: ("coco_2017_train_task_dropout_50",)
   TEST: ("coco_2017_val_task_dropout_50",)
-OUTPUT_DIR: output/coco-detection/build_acc_dataset/debug
+OUTPUT_DIR: output/coco-detection/generate_architecture/debug

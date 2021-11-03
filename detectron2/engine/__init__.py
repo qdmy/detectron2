@@ -10,10 +10,12 @@ __all__ = [k for k in globals().keys() if not k.startswith("_")]
 # but still make them available here
 from .hooks import *
 from .defaults import *
-
+import torch
+import numpy as np
 from tqdm import tqdm
 import os, json, shutil, logging
 from codebase.third_party.spos_ofa.ofa.nas.accuracy_predictor.acc_dataset import net_id2setting, net_setting2id
+from codebase.third_party.spos_ofa.ofa.nas.efficiency_predictor import Mbv3FLOPsModel
 from codebase.torchutils.common import unwarp_module
 from codebase.torchutils.distributed import is_master
 from detectron2.evaluation.evaluator import set_running_statistics, inference_subnet_on_dataset
@@ -129,3 +131,96 @@ def resume(resume, path):
 
         shutil.copy(net_id_ori_path, net_id_new_path)
         shutil.copytree(acc_src_ori_folder, acc_src_new_folder)
+
+
+def generate_arch(trainer, image_size):
+    logger = logging.getLogger(__name__)
+    controller = trainer.model
+    model = trainer.teacher_model
+    if hasattr(model, "module"):
+        model_without_module = model.module
+    else:
+        model_without_module = model
+    ofa_network = model_without_module.backbone.bottom_up
+
+    loader = trainer.data_loader
+    bn_subset_loader = trainer.bn_subset_loader
+    cfg = trainer.cfg
+    num_superclass = trainer.num_superclass
+    num_classes_per_superclass = trainer.num_class_per_superclass
+    constraint_low = cfg.MODEL.CONTROLLER.CONSTRAINT_LOW
+    constraint_high = cfg.MODEL.CONTROLLER.CONSTRAINT_HIGH
+    interval = cfg.MODEL.GENERATOR_ARCH.TEST_INTERVAL
+    index_to_superclass_name = trainer.meta.label_map # 得到每个超类的名字
+    evaluator = trainer.evaluator
+
+    latency_constraints = list(range(int(constraint_low), int(constraint_high) + 1, int(interval)))
+    superclass_map_list = []
+    superclass_flops_list = []
+    superclass_arch_dict_list = []
+
+    for superclass_id in range(num_superclass):
+        # superclass_id = 0
+        superclass_id = torch.tensor([superclass_id], dtype=torch.long).cuda()
+        mAP_list = []
+        flops_list = []
+        arch_list = []
+        for constraint in latency_constraints:
+            mAP_sub_list = []
+            flops_sub_list = []
+            arch_dict_sub_list = []
+            i = 0
+            while len(mAP_sub_list) < 10:
+                depths, ratios, ks, depth_cum_indicators, ratio_cum_indicators, kernel_cum_size_indicators = controller([constraint], superclass_id)
+                unwarp_module(ofa_network).set_active_subnet(ks, ratios, depths)
+                arch_dict = {
+                    'ks': ks,
+                    'e': ratios,
+                    'd': depths,
+                    'image_size': image_size,
+                    'superclass_id': superclass_id
+                }
+                efficiency_predictor = Mbv3FLOPsModel(ofa_network, num_classes_per_superclass=num_classes_per_superclass)
+                flops = efficiency_predictor.get_efficiency(arch_dict)
+                if flops > constraint:
+                    continue
+                set_running_statistics(model, bn_subset_loader)
+
+                results_subnet, final_box_clss_per_subnet, final_targetss_per_subnet, final_output_logitss_per_subnet, final_super_targetss_per_subnet\
+                    = inference_subnet_on_dataset(model, loader, evaluator, subnet_name=arch_dict)
+                AP_names, AP_results, superclass_mAPs = print_csv_format(results_subnet, only_AP=True) # mAP = AP_results[0]
+                superclass_dict = {}
+                for (name, ap) in superclass_mAPs:
+                    superclass_dict[name[3:]] = ap # 去掉AP-的前缀
+                superclass_mAP = superclass_dict[index_to_superclass_name[superclass_id.item()]]
+                logger.info(f"Superclass: {index_to_superclass_name[superclass_id.item()]}, Constraint: {constraint}, FLOPs: {flops}, {i}-th")
+
+                mAP_sub_list.append(superclass_mAP)
+                flops_sub_list.append(flops)
+                arch_dict_sub_list.append(arch_dict)
+                i += 1
+
+            max_acc = max(mAP_sub_list)
+            max_index = mAP_sub_list.index(max_acc)
+            mAP_list.append(max_acc)
+            flops_list.append(flops_sub_list[max_index])
+            arch_list.append(arch_dict_sub_list[max_index])
+
+        logger.info(f"mAP list: {mAP_list}")
+        logger.info(f"FLOPs list: {flops_list}")
+        superclass_map_list.append(mAP_list)
+        superclass_flops_list.append(flops_list)
+        superclass_arch_dict_list.append(arch_list)
+
+    superclass_map_list = np.array(superclass_map_list)
+    superclass_flops_list = np.array(superclass_flops_list)
+    np.save(os.path.join(cfg.OUTPUT_DIR, "mAP.npy"), superclass_map_list)
+    np.save(os.path.join(cfg.OUTPUT_DIR, "flops.npy"), superclass_flops_list)
+    for i in range(num_superclass):
+        name = index_to_superclass_name[i]
+        num_constraint = len(superclass_arch_dict_list[0])
+        for j in range(num_constraint):
+            arch_dict = superclass_arch_dict_list[i][j]
+            logger.info(f"{name} for {j} MFLOPs")
+            logger.info(arch_dict)
+

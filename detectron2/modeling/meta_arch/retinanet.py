@@ -184,12 +184,12 @@ class RetinaNet(nn.Module):
         # self.superclass_accuracy_metric = SuperclassAccuracyMetric(topk=(1, 5), n_superclass=self.num_super_classes)
 
     @classmethod
-    def from_config(cls, cfg, create_teacher=False, train_controller=False):
+    def from_config(cls, cfg, create_teacher=False, train_controller=False, generate_arch=False):
         dataset_names = list(cfg.DATASETS.TRAIN)
         assert len(dataset_names)==1, 'only support one single dataset at a time'
         task_dropout = True if 'task_dropout' in dataset_names[0] or train_controller else False
 
-        backbone = build_backbone(cfg, create_teacher=create_teacher, train_controller=train_controller)
+        backbone = build_backbone(cfg, create_teacher=create_teacher, train_controller=train_controller, generate_arch=generate_arch)
         backbone_shape = backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in cfg.MODEL.RETINANET.IN_FEATURES]
         head = RetinaNetHead(cfg, feature_shapes)

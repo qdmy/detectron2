@@ -19,7 +19,7 @@ class DetectionCheckpointer(Checkpointer):
     2. correctly load checkpoints that are only available on the master worker
     """
 
-    def __init__(self, model, save_dir="", is_ofa=True, resume=False, trainer=None, *, save_to_disk=None, **checkpointables):
+    def __init__(self, model, save_dir="", is_ofa=True, is_controller=False, resume=False, trainer=None, *, save_to_disk=None, **checkpointables):
         is_main_process = comm.is_main_process()
         none_list = []
         for k, v in checkpointables.items():
@@ -35,6 +35,7 @@ class DetectionCheckpointer(Checkpointer):
         )
         self.path_manager = PathManager
         self.is_ofa = is_ofa
+        self.is_controller = is_controller
         self.resume = resume
         self.trainer = trainer
 
@@ -59,7 +60,10 @@ class DetectionCheckpointer(Checkpointer):
             if not has_file:
                 path = None  # don't load if not readable
         if not self.is_ofa:
-            self.logger.info("[Checkpointer] now is Loading teacher model")
+            if self.is_controller:
+                self.logger.info("[Checkpointer] now is Loading controller")
+            else:
+                self.logger.info("[Checkpointer] now is Loading teacher model")
         ret = super().load(path, *args, **kwargs)
 
         if need_sync:

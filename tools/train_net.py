@@ -26,7 +26,7 @@ import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog
-from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch, build_acc_dataset
+from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch, build_acc_dataset, generate_arch
 from detectron2.engine import resume as acc_dataset_resume
 from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
@@ -143,9 +143,15 @@ def main(args):
         trainer = Trainer(cfg, build_acc_dset=True)
         if cfg.MODEL.BUILD_ACC_DATASET.RESUME:
             acc_dataset_resume(cfg.MODEL.BUILD_ACC_DATASET.RESUME, cfg.OUTPUT_DIR)
-        build_acc_dataset(cfg.OUTPUT_DIR, trainer, image_size_list=[224], n_arch=cfg.MODEL.BUILD_ACC_DATASET.N_ARCH, all_tasks=cfg.MODEL.BUILD_ACC_DATASET.ALL_TASKS)
-        return # build acc dataset can be done in the __init__
+        return build_acc_dataset(cfg.OUTPUT_DIR, trainer, image_size_list=[224], n_arch=cfg.MODEL.BUILD_ACC_DATASET.N_ARCH, all_tasks=cfg.MODEL.BUILD_ACC_DATASET.ALL_TASKS)
+    
+    # TODO: search by predictor
 
+    # generate arch
+    if cfg.MODEL.GENERATOR_ARCH.ENABLED:
+        trainer = Trainer(cfg, generate_arch=True)
+        return generate_arch(trainer, image_size=224)
+        
     if args.eval_only:
         model, _ = Trainer.build_model(cfg)
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR, is_ofa=cfg.MODEL.IS_OFA, resume=args.resume).resume_or_load(

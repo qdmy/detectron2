@@ -460,7 +460,7 @@ class DefaultTrainer(TrainerBase):
         cfg (CfgNode):
     """
 
-    def __init__(self, cfg, resume=False, build_acc_dset=False):
+    def __init__(self, cfg, resume=False, build_acc_dset=False, generate_arch=False):
         """
         Args:
             cfg (CfgNode):
@@ -501,10 +501,13 @@ class DefaultTrainer(TrainerBase):
         # 如果是训练controller，那么model就是controller，teacher_model则是mp_ofa_mbv3或者sp_ofa_mbv3
         # 当训练controller时，optimizer，之类的，都跟graphnas代码里的一致
         # model, optimizer, scheduler, etc，都要根据controller来对应创建
-        model, teacher_model = self.build_model(cfg, train_controller=self.train_controller)
+        model, teacher_model = self.build_model(cfg, train_controller=self.train_controller or generate_arch, generate_arch=generate_arch)
         if build_acc_dset:
             assert self.task_dropout, "when build acc dataset, task dropout needs to be true for some dataloader"
             assert teacher_model is None, "when build acc dataset, no need for teacher"
+        elif generate_arch:
+            assert self.task_dropout, "when generate arch, task dropout needs to be true for some dataloader"
+            assert teacher_model is not None, "when generate arch, teacher is needed as OFA"
         else: # build acc dataset的时候不需要build optimizer
             optimizer = self.build_optimizer(cfg, model, train_controller=self.train_controller)
 
@@ -535,18 +538,42 @@ class DefaultTrainer(TrainerBase):
             self.recompute_tau_and_permutation(epoch=0) # 初始化tau和permutation
             self.meta = meta
             self.img_ids_controller_used = []
-        elif not build_acc_dset:
+        elif not build_acc_dset or not generate_arch:
             data_loader = self.build_train_loader(cfg)
             teacher_pretrained = cfg.MODEL.OFA_MOBILENETV3.teacher
             num_class_per_superclass = 0
 
         model = create_ddp_model(model, broadcast_buffers=False, find_unused_parameters=cfg.MODEL.IS_OFA)
         if teacher_model is not None:
-            if not self.train_controller:
+            if not self.train_controller and not generate_arch:
                 model = sort_channels(model)
             teacher_model = create_ddp_model(teacher_model, broadcast_buffers=False, find_unused_parameters=True)
-            DetectionCheckpointer(teacher_model, is_ofa=False).resume_or_load(teacher_pretrained) # 这里就load了teacher model
-        if not build_acc_dset:
+            if not generate_arch:
+                DetectionCheckpointer(teacher_model, is_ofa=False).resume_or_load(teacher_pretrained) # 这里就load了teacher model
+        if build_acc_dset: # for build acc dataset
+            DetectionCheckpointer(model, is_ofa=True).resume_or_load(cfg.MODEL.BUILD_ACC_DATASET.OFA_CKPT) # load ofa model
+            self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(model, data_loader=None, optimizer=None) # 为了下面的attr检查，实际上是没用的
+            model.eval()
+            dataset_name = cfg.DATASETS.TEST[0]
+            self.data_loader, self.meta, class_ranges = self.build_test_loader(cfg, dataset_name, task_dropout=self.task_dropout)
+            self.bn_subset_loader = self.build_bn_subset_loader(cfg)
+            self.evaluator = self.build_evaluator(cfg, dataset_name)
+            self.num_superclass = len(class_ranges)
+        elif generate_arch:
+            DetectionCheckpointer(model, is_ofa=False, is_controller=True).resume_or_load(cfg.MODEL.GENERATOR_ARCH.CONTROLLER_CKPT) # load controller
+            DetectionCheckpointer(teacher_model, is_ofa=True).resume_or_load(cfg.MODEL.CONTROLLER.TEACHER.WEIGHT) # load ofa model
+            self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(model, data_loader=None, optimizer=None, teacher_model=teacher_model,) # 为了下面的attr检查，实际上是没用的
+            model.eval()
+            teacher_model.eval()
+            dataset_name = cfg.DATASETS.TEST[0]
+            self.data_loader, self.meta, class_ranges = self.build_test_loader(cfg, dataset_name, self.task_dropout, train_controller=self.train_controller)
+            self.num_superclass = len(class_ranges)
+            self.num_class_per_superclass = len(class_ranges[0])
+            logger.info(f"Num superclass: {self.num_superclass}")
+            logger.info(f"Num class per superclass: {self.num_class_per_superclass}")
+            self.bn_subset_loader = self.build_bn_subset_loader(cfg)
+            self.evaluator = self.build_evaluator(cfg, dataset_name)
+        else:
             self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
                 model, data_loader, optimizer, task_dropout=self.task_dropout, 
                 teacher_model=teacher_model, kd_ratio=cfg.MODEL.OFA_MOBILENETV3.KD_RATIO,
@@ -573,15 +600,6 @@ class DefaultTrainer(TrainerBase):
                 self.max_iter = cfg.SOLVER.MAX_ITER
 
             self.register_hooks(self.build_hooks())
-        else: # for build acc dataset
-            DetectionCheckpointer(model, is_ofa=True).resume_or_load(cfg.MODEL.BUILD_ACC_DATASET.OFA_CKPT) # load ofa model
-            self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(model, data_loader=None, optimizer=None) # 为了下面的attr检查，实际上是没用的
-            model.eval()
-            dataset_name = cfg.DATASETS.TEST[0]
-            self.data_loader, self.meta, class_ranges = self.build_test_loader(cfg, dataset_name, task_dropout=self.task_dropout)
-            self.bn_subset_loader = self.build_bn_subset_loader(cfg)
-            self.evaluator = self.build_evaluator(cfg, dataset_name)
-            self.num_superclass = len(class_ranges)
 
     def resume_or_load(self, resume=True):
         """
@@ -720,7 +738,7 @@ class DefaultTrainer(TrainerBase):
             self._trainer.run_step()
 
     @classmethod
-    def build_model(cls, cfg, train_controller=False):
+    def build_model(cls, cfg, train_controller=False, generate_arch=False):
         """
         Returns:
             torch.nn.Module:
@@ -728,12 +746,12 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`detectron2.modeling.build_model`.
         Overwrite it if you'd like a different model.
         """
-        model, teacher_model = build_model(cfg, train_controller=train_controller)
+        model, teacher_model = build_model(cfg, train_controller=train_controller, generate_arch=generate_arch)
         logger = logging.getLogger(__name__)
         actual_teacher_name = ""
         actual_model_name = ""
         if train_controller:
-            actual_teacher_name = " (is mp/sp_ofa_mbv3)"
+            actual_teacher_name = " is ofa" if generate_arch else " (is mp/sp_ofa_mbv3)"
             actual_model_name = " (is controller)"
         logger.info("teacher Model{}:\n{}".format(actual_teacher_name, teacher_model))
         logger.info("Model{}:\n{}".format(actual_model_name, model))
