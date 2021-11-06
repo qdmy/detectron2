@@ -106,7 +106,8 @@ _C.DATASETS.PRECOMPUTED_PROPOSAL_TOPK_TEST = 1000
 _C.DATASETS.SUPERCLASS_NUM = 11
 # control debug data size, only load part
 _C.DATASETS.STOP_LOAD = -1
-
+# control partial test data, only load part
+_C.DATASETS.NUM_PART_TEST = 100
 # -----------------------------------------------------------------------------
 # DataLoader
 # -----------------------------------------------------------------------------
@@ -122,6 +123,7 @@ _C.DATALOADER.SAMPLER_TRAIN = "TrainingSampler"
 # for BN computing in Evalution
 _C.DATALOADER.BN_SUBSET_SAMPLER = "SubsetRandomSampler"
 _C.DATALOADER.BN_SUBSET_SIZE = 2000
+_C.DATALOADER.BN_SUBSET_SIZE_FASTER = 200
 _C.DATALOADER.BN_SUBSET_SEED = 2021
 
 # Repeat threshold for RepeatFactorTrainingSampler
@@ -547,7 +549,9 @@ _C.MODEL.BUILD_ACC_DATASET = CN({"ENABLED": False})
 _C.MODEL.BUILD_ACC_DATASET.RESUME = ""
 _C.MODEL.BUILD_ACC_DATASET.N_ARCH = 16000
 _C.MODEL.BUILD_ACC_DATASET.ALL_TASKS = False 
-_C.MODEL.BUILD_ACC_DATASET.OFA_CKPT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0-no-kd/model_final.pth"
+_C.MODEL.BUILD_ACC_DATASET.JUST_BUILD_NET_ID = False
+_C.MODEL.BUILD_ACC_DATASET.NET_ID_PART_INDEX = -1
+_C.MODEL.BUILD_ACC_DATASET.OFA_CKPT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0-2kd/model_final.pth"
 
 # ---------------------------------------------------------------------------- #
 # MP_OFA_MobileNetV3
@@ -604,6 +608,27 @@ _C.MODEL.GENERATOR_ARCH = CN({"ENABLED": False})
 _C.MODEL.GENERATOR_ARCH.TYPE = "SP" # SP or MP, but MP is not supported 
 _C.MODEL.GENERATOR_ARCH.TEST_INTERVAL = 50
 _C.MODEL.GENERATOR_ARCH.CONTROLLER_CKPT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/controller/retinanet_controller_MBV3Large_FPN_1x_SP_run2/model_final.pth"
+
+
+# ---------------------------------------------------------------------------- #
+# train predictor
+# ---------------------------------------------------------------------------- #
+_C.MODEL.PREDICTOR = CN({"ENABLED": False})
+_C.MODEL.PREDICTOR.ALL_TASK = False
+_C.MODEL.PREDICTOR.SEED = 2021
+_C.MODEL.PREDICTOR.MAP_ROOT = ""
+_C.MODEL.PREDICTOR.LR = 0.1
+_C.MODEL.PREDICTOR.MIN_LR = 1e-3
+_C.MODEL.PREDICTOR.MOMENTUM = 0.9
+_C.MODEL.PREDICTOR.WD = 1e-4
+_C.MODEL.PREDICTOR.MAX_EPOCHS = 250
+_C.MODEL.PREDICTOR.NUM_SUPERCLASS = 11
+_C.MODEL.PREDICTOR.BATCHSIZE = 256
+_C.MODEL.PREDICTOR.NUM_WORKERS = 8
+_C.MODEL.PREDICTOR.REPORT_FREQ = 10
+_C.MODEL.PREDICTOR.KS_LIST = [3,5,7]
+_C.MODEL.PREDICTOR.EXPAND_LIST = [3,4,6]
+_C.MODEL.PREDICTOR.DEPTH_LIST = [2,3,4]
 
 # ---------------------------------------------------------------------------- #
 # Solver

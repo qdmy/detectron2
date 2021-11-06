@@ -538,7 +538,7 @@ class DefaultTrainer(TrainerBase):
             self.recompute_tau_and_permutation(epoch=0) # 初始化tau和permutation
             self.meta = meta
             self.img_ids_controller_used = []
-        elif not build_acc_dset or not generate_arch:
+        elif not build_acc_dset and not generate_arch:
             data_loader = self.build_train_loader(cfg)
             teacher_pretrained = cfg.MODEL.OFA_MOBILENETV3.teacher
             num_class_per_superclass = 0
@@ -556,7 +556,8 @@ class DefaultTrainer(TrainerBase):
             model.eval()
             dataset_name = cfg.DATASETS.TEST[0]
             self.data_loader, self.meta, class_ranges = self.build_test_loader(cfg, dataset_name, task_dropout=self.task_dropout)
-            self.bn_subset_loader = self.build_bn_subset_loader(cfg)
+            # self.bn_subset_loader = self.build_bn_subset_loader(cfg)
+            self.partial_bn_subset_loader = self.build_bn_subset_loader(cfg, part=True)
             self.evaluator = self.build_evaluator(cfg, dataset_name)
             self.num_superclass = len(class_ranges)
         elif generate_arch:
@@ -567,11 +568,13 @@ class DefaultTrainer(TrainerBase):
             teacher_model.eval()
             dataset_name = cfg.DATASETS.TEST[0]
             self.data_loader, self.meta, class_ranges = self.build_test_loader(cfg, dataset_name, self.task_dropout, train_controller=self.train_controller)
+            self.partial_data_loader, *_ = self.build_test_loader(cfg, dataset_name, self.task_dropout, train_controller=self.train_controller, part=True)
             self.num_superclass = len(class_ranges)
             self.num_class_per_superclass = len(class_ranges[0])
             logger.info(f"Num superclass: {self.num_superclass}")
             logger.info(f"Num class per superclass: {self.num_class_per_superclass}")
             self.bn_subset_loader = self.build_bn_subset_loader(cfg)
+            self.partial_bn_subset_loader = self.build_bn_subset_loader(cfg, part=True)
             self.evaluator = self.build_evaluator(cfg, dataset_name)
         else:
             self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
@@ -788,14 +791,14 @@ class DefaultTrainer(TrainerBase):
         return build_detection_train_loader(cfg)
 
     @classmethod
-    def build_bn_subset_loader(cls, cfg):
+    def build_bn_subset_loader(cls, cfg, part=False):
         """
         this function is for create a subset for BN when eval.
         """
-        return build_detection_bn_subset_loader(cfg)
+        return build_detection_bn_subset_loader(cfg, part=part)
 
     @classmethod
-    def build_test_loader(cls, cfg, dataset_name, task_dropout=False, train_controller=False):
+    def build_test_loader(cls, cfg, dataset_name, task_dropout=False, train_controller=False, part=False):
         """
         Returns:
             iterable
@@ -803,7 +806,7 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`detectron2.data.build_detection_test_loader`.
         Overwrite it if you'd like a different data loader.
         """
-        return build_detection_test_loader(cfg, dataset_name, task_dropout=task_dropout, train_controller=train_controller)
+        return build_detection_test_loader(cfg, dataset_name, task_dropout=task_dropout, train_controller=train_controller, part=part)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name):

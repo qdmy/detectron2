@@ -40,7 +40,7 @@ from detectron2.evaluation import (
     verify_results,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
-
+from train_predictor import train_predictor
 
 class Trainer(DefaultTrainer):
     """
@@ -138,12 +138,18 @@ def setup(args):
 def main(args):
     cfg = setup(args)
 
+    # train predictor
+    if cfg.MODEL.PREDICTOR.ENABLED:
+        return train_predictor(cfg) 
+
     # build acc dataset
     if cfg.MODEL.BUILD_ACC_DATASET.ENABLED:
         trainer = Trainer(cfg, build_acc_dset=True)
         if cfg.MODEL.BUILD_ACC_DATASET.RESUME:
             acc_dataset_resume(cfg.MODEL.BUILD_ACC_DATASET.RESUME, cfg.OUTPUT_DIR)
-        return build_acc_dataset(cfg.OUTPUT_DIR, trainer, image_size_list=[224], n_arch=cfg.MODEL.BUILD_ACC_DATASET.N_ARCH, all_tasks=cfg.MODEL.BUILD_ACC_DATASET.ALL_TASKS)
+        return build_acc_dataset(cfg.OUTPUT_DIR, trainer, image_size_list=[224], n_arch=cfg.MODEL.BUILD_ACC_DATASET.N_ARCH, \
+            all_tasks=cfg.MODEL.BUILD_ACC_DATASET.ALL_TASKS, just_generate_net_id=cfg.MODEL.BUILD_ACC_DATASET.JUST_BUILD_NET_ID, \
+                net_id_part=cfg.MODEL.BUILD_ACC_DATASET.NET_ID_PART_INDEX)
     
     # TODO: search by predictor
 

@@ -21,15 +21,17 @@ from codebase.torchutils.distributed import is_master
 from detectron2.evaluation.evaluator import set_running_statistics, inference_subnet_on_dataset
 from detectron2.evaluation.testing import print_csv_format
 
-def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_tasks=False,):
+def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_tasks=False, just_generate_net_id=False, net_id_part=-1):
     """
     def inference_on_dataset(
         model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], task_dropout=False,
         bn_subset_loader=None,
     ):
     """
+
     logger = logging.getLogger(__name__)
-    bn_subset_loader = trainer.bn_subset_loader
+    part_bn_subset_loader = trainer.partial_bn_subset_loader
+    # bn_subset_loader = trainer.bn_subset_loader
     val_loader = trainer.data_loader
     if hasattr(trainer.model, "module"):
         model_without_module = trainer.model.module
@@ -38,8 +40,34 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
     ofa_network = model_without_module.backbone.bottom_up
     evaluator = trainer.evaluator
 
-    net_id_path = os.path.join(path, "net_id.dict")
-    acc_src_folder = os.path.join(path, "src")
+    # 生成16000个net，分为16分
+    if just_generate_net_id:
+        whole_net_id_list = set()
+        net_id_list = set()
+        while len(whole_net_id_list) < n_arch:
+            net_setting = unwarp_module(ofa_network).sample_active_subnet()
+            net_id = net_setting2id(net_setting)
+            net_id_list.add(net_id)
+            whole_net_id_list.add(net_id)
+            if len(net_id_list) == 500:
+                net_id_list = list(net_id_list)
+                net_id_list.sort()
+                net_id_path = os.path.join(path, f"part{len(whole_net_id_list)//500}_net_id.dict")
+                json.dump(net_id_list, open(net_id_path, "w"), indent=4)
+                net_id_list = set()
+
+        whole_net_id_list = list(whole_net_id_list)
+        whole_net_id_list.sort()
+        whole_net_id_path = os.path.join(path, "net_id.dict")
+        json.dump(whole_net_id_list, open(whole_net_id_path, "w"), indent=4)
+        return 0
+
+    if net_id_part != -1:
+        net_id_path = os.path.join(path, f"part{net_id_part}_net_id.dict")
+        acc_src_folder = os.path.join(path, f"part{net_id_part}_src")
+    else:
+        net_id_path = os.path.join(path, "net_id.dict")
+        acc_src_folder = os.path.join(path, "src")
 
     # load net_id_list, random sample if not exist
     if os.path.isfile(net_id_path):
@@ -65,11 +93,20 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
             os.makedirs(acc_src_folder, exist_ok=True)
             acc_save_path = os.path.join(acc_src_folder, f"{image_size}.dict")
             acc_dict = {}
+
+            acc_save_path_all_tasks = os.path.join(acc_src_folder, f"{image_size}_all_tasks.dict")
+            acc_dict_all_tasks = {}
+
             # load existing acc dict
             if os.path.isfile(acc_save_path):
                 existing_acc_dict = json.load(open(acc_save_path, "r"))
             else:
                 existing_acc_dict = {}
+            if os.path.isfile(acc_save_path_all_tasks):
+                existing_acc_dict_all_tasks = json.load(open(acc_save_path_all_tasks, "r"))
+            else:
+                existing_acc_dict_all_tasks = {}
+
             for net_id in net_id_list:
                 net_setting = net_id2setting(net_id)
                 key = net_setting2id(
@@ -79,12 +116,15 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
                     }
                 )
                 if key in existing_acc_dict:
+                    assert key in existing_acc_dict_all_tasks, "if key in acc dict, it must in acc dict all task"
                     acc_dict[key] = existing_acc_dict[key]
+                    acc_dict_all_tasks[key] = existing_acc_dict_all_tasks[key]
                     t.set_postfix(
                         {
                             "net_id": net_id,
                             "image_size": image_size,
                             "info_val": acc_dict[key],
+                            "info_val_all_tasks": acc_dict_all_tasks[key],
                             "status": "loading",
                         }
                     )
@@ -92,7 +132,7 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
                     continue
                 unwarp_module(ofa_network).set_active_subnet(**net_setting)
                 logger.info("Start set_running_statistics() for {}".format(net_id))
-                set_running_statistics(trainer.model, bn_subset_loader)
+                set_running_statistics(trainer.model, part_bn_subset_loader)
                 logger.info("Finish set_running_statistics() for {}".format(net_id))
 
                 results_subnet, final_box_clss_per_subnet, final_targetss_per_subnet, final_output_logitss_per_subnet, final_super_targetss_per_subnet\
@@ -100,18 +140,19 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
                 AP_names, AP_results, superclass_mAP = print_csv_format(results_subnet, only_AP=True) # mAP = AP_results[0]
 
                 if is_master():
-                    if all_tasks:
-                        info_val = AP_results[0]
-                    else: # 得到各个超类上的mAP
-                        info_val = ""
-                        for (name, ap) in superclass_mAP:
-                            info_val = info_val + "{}={} ".format(name, ap)
+                    # if all_tasks: # 直接一次性把两个都保存下来，反正只有info val信息的不同
+                    info_val_all_tasks = AP_results[0]
+                    # else: # 得到各个超类上的mAP
+                    info_val = ""
+                    for (name, ap) in superclass_mAP:
+                        info_val = info_val + "{}={} ".format(name, ap)
                     
                     t.set_postfix(
                         {
                             "net_id": net_id,
                             "image_size": image_size,
                             "info_val": info_val,
+                            "info_val_all_tasks": info_val_all_tasks
                             # "superclass_id": superclass_idx,
                         }
                     )
@@ -119,6 +160,9 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
 
                     acc_dict.update({key: info_val})
                     json.dump(acc_dict, open(acc_save_path, "w"), indent=4)
+
+                    acc_dict_all_tasks.update({key: info_val_all_tasks})
+                    json.dump(acc_dict_all_tasks, open(acc_save_path_all_tasks, "w"), indent=4)
 
 
 def resume(resume, path):
@@ -142,8 +186,9 @@ def generate_arch(trainer, image_size):
     else:
         model_without_module = model
     ofa_network = model_without_module.backbone.bottom_up
-
+    part_loader = trainer.partial_data_loader
     loader = trainer.data_loader
+    part_bn_subset_loader = trainer.partial_bn_subset_loader
     bn_subset_loader = trainer.bn_subset_loader
     cfg = trainer.cfg
     num_superclass = trainer.num_superclass
@@ -184,10 +229,12 @@ def generate_arch(trainer, image_size):
                 flops = efficiency_predictor.get_efficiency(arch_dict)
                 if flops > constraint:
                     continue
-                set_running_statistics(model, bn_subset_loader)
-
+                
+                logger.info("Start set_running_statistics() faster")
+                set_running_statistics(model, part_bn_subset_loader) # 用一点图片快速set
+                logger.info("End set_running_statistics() faster")
                 results_subnet, final_box_clss_per_subnet, final_targetss_per_subnet, final_output_logitss_per_subnet, final_super_targetss_per_subnet\
-                    = inference_subnet_on_dataset(model, loader, evaluator, subnet_name=arch_dict)
+                    = inference_subnet_on_dataset(model, part_loader, evaluator, subnet_name=arch_dict)
                 AP_names, AP_results, superclass_mAPs = print_csv_format(results_subnet, only_AP=True) # mAP = AP_results[0]
                 superclass_dict = {}
                 for (name, ap) in superclass_mAPs:
@@ -202,7 +249,21 @@ def generate_arch(trainer, image_size):
 
             max_acc = max(mAP_sub_list)
             max_index = mAP_sub_list.index(max_acc)
-            mAP_list.append(max_acc)
+            # 用最好的网络在完整的loader上测试得出结果
+            best_arch = arch_dict_sub_list[max_index]
+            logger.info(f"Best arch: {best_arch}, inference on whole testset.")
+            unwarp_module(ofa_network).set_active_subnet(best_arch['ks'], best_arch['e'], best_arch['d'])
+            logger.info("Start set_running_statistics() for best arch")
+            set_running_statistics(model, bn_subset_loader)
+            logger.info("End set_running_statistics() for best arch")
+            best_results_subnet, final_box_clss_per_subnet, final_targetss_per_subnet, final_output_logitss_per_subnet, final_super_targetss_per_subnet\
+                = inference_subnet_on_dataset(model, loader, evaluator, subnet_name=best_arch)
+            best_AP_names, best_AP_results, best_superclass_mAPs = print_csv_format(best_results_subnet, only_AP=True)
+            best_superclass_dict = {}
+            for (name, ap) in best_superclass_mAPs:
+                best_superclass_dict[name[3:]] = ap # 去掉AP-的前缀
+            best_superclass_mAP = best_superclass_dict[index_to_superclass_name[superclass_id.item()]]
+            mAP_list.append(best_superclass_mAP)
             flops_list.append(flops_sub_list[max_index])
             arch_list.append(arch_dict_sub_list[max_index])
 

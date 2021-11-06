@@ -454,7 +454,7 @@ def build_detection_train_loader(
     )
 
 
-def _bn_subset_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
+def _bn_subset_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None, part=False):
     dataset_names = list(cfg.DATASETS.TRAIN)
     assert len(dataset_names)==1, 'only support one single dataset at a time'
     if 'task_dropout' in dataset_names[0]:
@@ -487,12 +487,13 @@ def _bn_subset_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=Non
         "class_ranges": class_ranges,
         "meta": meta,
         "in_hier": in_hier,
-        "task_dropout": task_dropout
+        "task_dropout": task_dropout,
+        "part": part,
     }
 
 @configurable(from_config=_bn_subset_loader_from_config)
 def build_detection_bn_subset_loader(
-    dataset, *, mapper, cfg, total_batch_size, aspect_ratio_grouping=True, num_workers=0, class_ranges=None, meta=None, in_hier=None, task_dropout=False
+    dataset, *, mapper, cfg, total_batch_size, aspect_ratio_grouping=True, num_workers=0, class_ranges=None, meta=None, in_hier=None, task_dropout=False, part=False
 ):
     """
     Build a dataloader for object detection with some default features.
@@ -526,12 +527,18 @@ def build_detection_bn_subset_loader(
     dataset.superclass_masks = torch.tensor(dataset.superclass_masks).cuda()
     sampler_name = cfg.DATALOADER.BN_SUBSET_SAMPLER
     logger = logging.getLogger(__name__)
-    logger.info("Using bn subset sampler {} with {} images".format(sampler_name, cfg.DATALOADER.BN_SUBSET_SIZE))
+    if part:
+        logger.info("Using bn subset sampler {} with {} images for faster set bn statistic".format(sampler_name, cfg.DATALOADER.BN_SUBSET_SIZE_FASTER))
+    else:
+        logger.info("Using bn subset sampler {} with {} images".format(sampler_name, cfg.DATALOADER.BN_SUBSET_SIZE))
     n_samples = len(dataset)
     g = torch.Generator()
     g.manual_seed(cfg.DATALOADER.BN_SUBSET_SEED)
     rand_indexes = torch.randperm(n_samples, generator=g).tolist()
-    chosen_indexes = rand_indexes[:cfg.DATALOADER.BN_SUBSET_SIZE]
+    if part:
+        chosen_indexes = rand_indexes[:cfg.DATALOADER.BN_SUBSET_SIZE_FASTER]
+    else:
+        chosen_indexes = rand_indexes[:cfg.DATALOADER.BN_SUBSET_SIZE]
     if sampler_name == "SubsetRandomSampler":
         sampler = SubsetRandomSampler(chosen_indexes)
     else:
@@ -552,7 +559,7 @@ def build_detection_bn_subset_loader(
     )
 
 
-def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False, train_controller=False):
+def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False, train_controller=False, part=False):
     """
     Uses the given `dataset_name` argument (instead of the names in cfg), because the
     standard practice is to evaluate each test set individually (not combining them).
@@ -587,6 +594,8 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False,
     else:
         if cfg.DATASETS.STOP_LOAD > 0:
             dataset = dataset[:(cfg.DATASETS.STOP_LOAD+1)].copy()
+        if part: # load一部分10k张图片，加快generate arch的10中选1
+            dataset = dataset[:cfg.DATASETS.NUM_PART_TEST].copy()
         whole_dataset = None
     if mapper is None:
         mapper = DatasetMapper(cfg, False, task_dropout=task_dropout)

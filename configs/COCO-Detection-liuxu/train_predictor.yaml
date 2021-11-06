@@ -1,0 +1,20 @@
+MODEL:
+  PREDICTOR:
+    ENABLED: True
+    ALL_TASK: False
+    SEED: 2021
+    MAP_ROOT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/build_acc_dataset" # for debug
+    LR: 0.1
+    MIN_LR: 1e-3
+    MOMENTUM: 0.9
+    WD: 1e-4
+    MAX_EPOCHS: 250
+    NUM_SUPERCLASS: 11
+    BATCHSIZE: 256
+    NUM_WORKERS: 8
+    REPORT_FREQ: 10
+    KS_LIST: [3,5,7]
+    EXPAND_LIST: [3,4,6]
+    DEPTH_LIST: [2,3,4]
+
+OUTPUT_DIR: output/coco-detection/predictor/debug
