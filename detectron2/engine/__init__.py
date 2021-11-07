@@ -238,7 +238,7 @@ def generate_arch(trainer, image_size):
                 AP_names, AP_results, superclass_mAPs = print_csv_format(results_subnet, only_AP=True) # mAP = AP_results[0]
                 superclass_dict = {}
                 for (name, ap) in superclass_mAPs:
-                    superclass_dict[name[3:]] = ap # 去掉AP-的前缀
+                    superclass_dict[name[3:]] = float(ap) # 去掉AP-的前缀
                 superclass_mAP = superclass_dict[index_to_superclass_name[superclass_id.item()]]
                 logger.info(f"Superclass: {index_to_superclass_name[superclass_id.item()]}, Constraint: {constraint}, FLOPs: {flops}, {i}-th")
 
@@ -261,7 +261,7 @@ def generate_arch(trainer, image_size):
             best_AP_names, best_AP_results, best_superclass_mAPs = print_csv_format(best_results_subnet, only_AP=True)
             best_superclass_dict = {}
             for (name, ap) in best_superclass_mAPs:
-                best_superclass_dict[name[3:]] = ap # 去掉AP-的前缀
+                best_superclass_dict[name[3:]] = float(ap) # 去掉AP-的前缀
             best_superclass_mAP = best_superclass_dict[index_to_superclass_name[superclass_id.item()]]
             mAP_list.append(best_superclass_mAP)
             flops_list.append(flops_sub_list[max_index])

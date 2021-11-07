@@ -190,7 +190,7 @@ class OFAMobileNetV3(MobileNetV3):
 
 	@property
 	def module_str(self):
-		_str = self.first_conv.module_str + '\n'
+		_str = self.first_conv[0].module_str + '\n'
 		_str += self.blocks[0].module_str + '\n'
 
 		for stage_id, block_idx in enumerate(self.block_group_info):
@@ -209,7 +209,7 @@ class OFAMobileNetV3(MobileNetV3):
 		return {
 			'name': OFAMobileNetV3.__name__,
 			'bn': self.get_bn_param(),
-			'first_conv': self.first_conv.config,
+			'first_conv': self.first_conv[0].config,
 			'blocks': [
 				block.config for block in self.blocks
 			],

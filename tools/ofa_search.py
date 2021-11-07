@@ -125,7 +125,7 @@ def ofa_search(cfg, trainer):
         ks_list=args.ks_list,
         expand_list=args.expand_list,
         depth_list=args.depth_list,
-        superclass_list=list(range(num_superclass)) # 这个参数是要给的
+        # superclass_list=list(range(num_superclass)) # 这个参数是要给的
     )
     accuracy_predictor = AccuracyPredictor(arch_encoder=arch_encoder)
     init = torch.load(args.acc_pretrained, map_location="cpu")
@@ -144,7 +144,7 @@ def ofa_search(cfg, trainer):
             all_task_mAP = []
         for latency_constraint in latency_constraints:
             if not args.only_show_time:
-                logger.info(f"Searching for {latency_constraint}M FLOPs for superclass {superclass_id}")
+                logger.info(f"Searching for {latency_constraint}M FLOPs for superclass-{superclass_id}:{index_to_superclass_name[superclass_id]}")
                 if not args.all_task:
                     mAP_sub_list = []
                     predict_mAP_sub_list = []
@@ -175,12 +175,12 @@ def ofa_search(cfg, trainer):
                 AP_names, AP_results, superclass_mAPs = print_csv_format(results_subnet, only_AP=True) # mAP = AP_results[0]
                 superclass_dict = {}
                 for (name, ap) in superclass_mAPs:
-                    superclass_dict[name[3:]] = ap # 去掉AP-的前缀
+                    superclass_dict[name[3:]] = float(ap) # 去掉AP-的前缀
                 if args.all_task:
                     all_task_mAP.append(AP_results[0])
                     each_task_mAP = []
                     for superclass_id in range(num_superclass):
-                        each_task_mAP.append(superclass_dict[index_to_superclass_name[superclass_id.item()]])
+                        each_task_mAP.append(superclass_dict[index_to_superclass_name[superclass_id]])
                     mAP.append(each_task_mAP)
                     predict_mAP.append(best_info[0])
                     flops.append(best_info[-1])
@@ -189,8 +189,8 @@ def ofa_search(cfg, trainer):
                     flops_list = flops
                     break
                 else:
-                    superclass_mAP = superclass_dict[index_to_superclass_name[superclass_id.item()]]
-                    logger.info(f"Superclass: {index_to_superclass_name[superclass_id.item()]}, mAP: {superclass_mAP:.2f}, FLOPs: {best_info[-1]:.2f}, {i}-th")
+                    superclass_mAP = superclass_dict[index_to_superclass_name[superclass_id]]
+                    logger.info("Superclass: {}, mAP: {:.2f}, FLOPs: {:.2f}, {}-th".format(index_to_superclass_name[superclass_id], superclass_mAP, best_info[-1], i))
                     mAP_sub_list.append(superclass_mAP)
                     predict_mAP_sub_list.append(best_info[0])
                     flops_sub_list.append(best_info[-1])
@@ -210,7 +210,7 @@ def ofa_search(cfg, trainer):
                 best_superclass_dict = {}
                 for (name, ap) in best_superclass_mAPs:
                     best_superclass_dict[name[3:]] = ap # 去掉AP-的前缀
-                best_superclass_mAP = best_superclass_dict[index_to_superclass_name[superclass_id.item()]]
+                best_superclass_mAP = best_superclass_dict[index_to_superclass_name[superclass_id]]
                 
                 mAP.append(best_superclass_mAP)
                 predict_mAP.append(predict_mAP_sub_list[max_index])
@@ -245,7 +245,7 @@ def ofa_search(cfg, trainer):
             plt.ylabel('Predicted mAP', size=12)
             plt.legend(['OFA'], loc='lower right')
             plt.grid(True)
-            plt.savefig(os.path.join(cfg.OUTPUT_DIR, f"{index_to_superclass_name[superclass_id.item()]}_predicted.pdf"))
+            plt.savefig(os.path.join(cfg.OUTPUT_DIR, f"{index_to_superclass_name[superclass_id]}_predicted.pdf"))
             plt.close()
 
     if args.only_show_time:
@@ -257,7 +257,7 @@ def ofa_search(cfg, trainer):
     flops_list = np.array(flops_list)
     if args.all_task:
         all_task_mAP = np.array(all_task_mAP)
-        np.save(os.path.join(cfg.OUTPUT_DIR, "mAP{}.npy".format("_all_task" if args.all_task else "")), all_task_mAP)
+        np.save(os.path.join(cfg.OUTPUT_DIR, "mAP_all_task.npy"), all_task_mAP)
     np.save(os.path.join(cfg.OUTPUT_DIR, "mAP{}.npy".format("_each_task" if args.all_task else "")), mAP_list)
     np.save(os.path.join(cfg.OUTPUT_DIR, "flops{}.npy".format("_all_task" if args.all_task else "")), flops_list)
     if not args.all_task:

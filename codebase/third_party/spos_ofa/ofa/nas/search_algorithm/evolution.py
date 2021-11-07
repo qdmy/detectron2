@@ -22,8 +22,8 @@ class EvolutionFinder:
 		# evolution hyper-parameters
 		self.arch_mutate_prob = kwargs.get('arch_mutate_prob', 0.1)
 		self.resolution_mutate_prob = kwargs.get('resolution_mutate_prob', 0.5)
-		self.population_size = kwargs.get('population_size', 100)
-		self.max_time_budget = kwargs.get('max_time_budget', 500)
+		self.population_size = kwargs.get('population_size', 100) 
+		self.max_time_budget = kwargs.get('max_time_budget', 500) 
 		self.parent_ratio = kwargs.get('parent_ratio', 0.25)
 		self.mutation_ratio = kwargs.get('mutation_ratio', 0.5)
 
@@ -96,12 +96,12 @@ class EvolutionFinder:
 		          disable=(not verbose)) as t:
 			for i in range(self.max_time_budget):
 				parents = sorted(population, key=lambda x: x[0])[::-1][:parents_size]
-				acc = parents[0][0]
+				acc = parents[0][0] # 这里的acc就是mAP
 				t.set_postfix({
-					'acc': parents[0][0]
+					'mAP': parents[0][0]
 				})
 				if not verbose and (i + 1) % 100 == 0:
-					logger.info('Iter: {} Acc: {}'.format(i + 1, parents[0][0]))
+					logger.info('Iter: {} mAP: {}'.format(i + 1, parents[0][0]))
 
 				if acc > best_valids[-1]:
 					best_valids.append(acc)
