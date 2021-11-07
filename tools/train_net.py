@@ -41,6 +41,7 @@ from detectron2.evaluation import (
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
 from train_predictor import train_predictor
+from ofa_search import ofa_search
 
 class Trainer(DefaultTrainer):
     """
@@ -137,6 +138,11 @@ def setup(args):
 
 def main(args):
     cfg = setup(args)
+
+    # ofa search
+    if cfg.MODEL.OFA_SEARCH.ENABLED:
+        trainer = Trainer(cfg, ofa_search=True)
+        return ofa_search(cfg, trainer)
 
     # train predictor
     if cfg.MODEL.PREDICTOR.ENABLED:

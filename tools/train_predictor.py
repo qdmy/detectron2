@@ -239,7 +239,6 @@ def evaluate(epoch, model, loader, criterion, report_freq):
 
 def train_predictor(cfg):
     args = Args(cfg)
-    logger.info(args)
     set_reproducible(args.seed)
 
     # merge_acc_dataset(args.map_root, image_size_list=[224]) # 我直接在外部手动合并好了，这个函数不执行
@@ -252,6 +251,7 @@ def train_predictor(cfg):
         ks_list=args.ks_list,
         expand_list=args.expand_list,
         depth_list=args.depth_list,
+        superclass_list=list(range(args.num_superclass)) # 这个参数是要给的
     )
     train_loader, valid_loader, base_acc = build_acc_data_loader(
         args.map_root,

@@ -32,7 +32,7 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
     logger = logging.getLogger(__name__)
     part_bn_subset_loader = trainer.partial_bn_subset_loader
     # bn_subset_loader = trainer.bn_subset_loader
-    val_loader = trainer.data_loader
+    val_loader = trainer.input_data
     if hasattr(trainer.model, "module"):
         model_without_module = trainer.model.module
     else:
@@ -136,7 +136,7 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
                 logger.info("Finish set_running_statistics() for {}".format(net_id))
 
                 results_subnet, final_box_clss_per_subnet, final_targetss_per_subnet, final_output_logitss_per_subnet, final_super_targetss_per_subnet\
-                    = inference_subnet_on_dataset(trainer.model, val_loader, evaluator, subnet_name=net_id)
+                    = inference_subnet_on_dataset(trainer.model, val_loader, evaluator, subnet_name=net_id, is_build_acc_dataset=True)
                 AP_names, AP_results, superclass_mAP = print_csv_format(results_subnet, only_AP=True) # mAP = AP_results[0]
 
                 if is_master():
@@ -284,4 +284,3 @@ def generate_arch(trainer, image_size):
             arch_dict = superclass_arch_dict_list[i][j]
             logger.info(f"{name} for {j} MFLOPs")
             logger.info(arch_dict)
-

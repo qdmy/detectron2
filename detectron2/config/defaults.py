@@ -631,6 +631,24 @@ _C.MODEL.PREDICTOR.EXPAND_LIST = [3,4,6]
 _C.MODEL.PREDICTOR.DEPTH_LIST = [2,3,4]
 
 # ---------------------------------------------------------------------------- #
+# ofa_search
+# ---------------------------------------------------------------------------- #
+_C.MODEL.OFA_SEARCH = CN({"ENABLED": False})
+_C.MODEL.OFA_SEARCH.ALL_TASK = False
+_C.MODEL.OFA_SEARCH.ONLY_SHOW_TIME = False
+_C.MODEL.OFA_SEARCH.SEED = 2021
+_C.MODEL.OFA_SEARCH.PREDICTOR_CKPT = "wait for predictor training"
+_C.MODEL.OFA_SEARCH.OFA_CKPT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0-2kd/model_final.pth"
+_C.MODEL.OFA_SEARCH.CONSTRAINT_LOW = 180
+_C.MODEL.OFA_SEARCH.CONSTRAINT_HIGH = 400
+_C.MODEL.OFA_SEARCH.CONSTRAINT_INTERVAL = 50
+_C.MODEL.OFA_SEARCH.REPORT_FREQ = 10
+_C.MODEL.OFA_SEARCH.KS_LIST = [3,5,7]
+_C.MODEL.OFA_SEARCH.EXPAND_LIST = [3,4,6]
+_C.MODEL.OFA_SEARCH.DEPTH_LIST = [2,3,4]
+_C.MODEL.OFA_SEARCH.NUM_SAMPLE = 10
+
+# ---------------------------------------------------------------------------- #
 # Solver
 # ---------------------------------------------------------------------------- #
 _C.SOLVER = CN()

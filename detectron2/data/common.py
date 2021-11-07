@@ -130,7 +130,7 @@ class DatasetFromList(data.Dataset):
         if self.train_controller:
             assert self.task_dropout
             self._serialize = False # train controller的时候必须为false，不搞这个了
-            logger.info("Now training controller, no need to serialize data") 
+            logger.info("Now data is related to controller, no need to serialize data") 
             self.superclass_id = 0
 
         if self.task_dropout:
@@ -469,3 +469,6 @@ class AspectRatioGroupedDataset(data.IterableDataset):
             if len(bucket) == self.batch_size:
                 yield bucket[:]
                 del bucket[:]
+
+    def __len__(self):
+        return len(self.dataset)

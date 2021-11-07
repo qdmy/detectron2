@@ -10,6 +10,6 @@ MODEL:
     IN_FEATURES: ["res2", "res4", "res5"]
     USE_RELU: True
 DATASETS:
-  TRAIN: ("coco_2017_train_task_dropout_50",)
-  TEST: ("coco_2017_val_task_dropout_50",)
+  TRAIN: ("coco_2017_train_task_dropout",)
+  TEST: ("coco_2017_val_controller",)
 OUTPUT_DIR: output/coco-detection/build_acc_dataset/debug

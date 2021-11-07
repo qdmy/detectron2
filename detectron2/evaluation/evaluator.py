@@ -74,12 +74,16 @@ def set_running_statistics(model, data_loader, distributed=False):
 
     with torch.no_grad():
         DynamicBatchNorm2d.SET_RUNNING_STATISTICS = True
-        for data in tqdm(data_loader):
-            inputs = np.array(data, dtype=object).T
-            for i in range(len(inputs[0])):
-                assert len(inputs[0][i]['instances'])==len(inputs[1][i]), "length not the same"
-            data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = inputs
-            forward_model(data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets)
+        with tqdm(
+            total=len(data_loader) // data_loader.batch_size, desc="Setting BN statistics"
+        ) as t:
+            for data in data_loader:
+                inputs = np.array(data, dtype=object).T
+                for i in range(len(inputs[0])):
+                    assert len(inputs[0][i]['instances'])==len(inputs[1][i]), "length not the same"
+                data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = inputs
+                forward_model(data, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets)
+                t.update()
         DynamicBatchNorm2d.SET_RUNNING_STATISTICS = False
 
     for name, m in model.named_modules():
@@ -178,7 +182,7 @@ class DatasetEvaluators(DatasetEvaluator):
         return results
 
 def inference_subnet_on_dataset(
-    model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], subnet_name="name of a subset", 
+    model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], subnet_name="name of a subset", is_build_acc_dataset=False
 ):
     """
     inference on one subset
@@ -222,8 +226,11 @@ def inference_subnet_on_dataset(
                 total_compute_time = 0
 
             start_compute_time = time.perf_counter()
-            data = np.array(inputs, dtype=object).T
-            inputs, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = data
+            if is_build_acc_dataset:
+                inputs, super_targets_idxs, super_targets = inputs
+            else:
+                data = np.array(inputs, dtype=object).T
+                inputs, super_targets_masks, super_targets_inverse_masks, super_targets_idxs, super_targets = data
             outputs, final_box_clss, final_targetss, final_output_logitss, final_super_targetss\
                  = model(inputs, super_targets_idxs=super_targets_idxs, super_targets=super_targets)
             if torch.cuda.is_available():

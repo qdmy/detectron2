@@ -11,5 +11,5 @@ MODEL:
     USE_RELU: True
 DATASETS:
   TRAIN: ("coco_2017_train_task_dropout",)
-  TEST: ("coco_2017_val_task_dropout",)
+  TEST: ("coco_2017_val_controller",)
 OUTPUT_DIR: output/coco-detection/build_acc_dataset/just_net_id_generation
