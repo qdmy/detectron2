@@ -487,7 +487,7 @@ class DefaultTrainer(TrainerBase):
 
             self.loss_lambda = cfg.MODEL.CONTROLLER.LOSS_LAMBDA
             self.loss_type = cfg.MODEL.CONTROLLER.LOSS_TYPE
-
+            self.sp_temp = cfg.MODEL.CONTROLLER.SP_TEMPERATURE
         else:
             dataset_names = list(cfg.DATASETS.TRAIN)
             self.multi_path_mbv3 =False
@@ -590,7 +590,7 @@ class DefaultTrainer(TrainerBase):
             self.evaluator = self.build_evaluator(cfg, dataset_name)
         elif generate_arch:
             DetectionCheckpointer(model, is_ofa=False, is_controller=True).resume_or_load(cfg.MODEL.GENERATOR_ARCH.CONTROLLER_CKPT) # load controller
-            DetectionCheckpointer(teacher_model, is_ofa=True).resume_or_load(cfg.MODEL.CONTROLLER.TEACHER.WEIGHT) # load ofa model
+            DetectionCheckpointer(teacher_model, is_ofa=True).resume_or_load(cfg.MODEL.CONTROLLER.TEACHER.WEIGHT) # TODO: load ofa model
             self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(model, data_loader=None, optimizer=None, teacher_model=teacher_model,) # 为了下面的attr检查，实际上是没用的
             model.eval()
             teacher_model.eval()
@@ -605,6 +605,12 @@ class DefaultTrainer(TrainerBase):
             self.partial_bn_subset_loader = self.build_bn_subset_loader(cfg, part=True)
             self.evaluator = self.build_evaluator(cfg, dataset_name)
         else:
+            if self.train_controller:
+                assert teacher_model is not None, "train controller requires a teacher model"
+                if cfg.MODEL.CONTROLLER.TRAIN_BN:
+                    teacher_model.train() # 设为train，让它能够直接使用当前batch的统计数据作为BN，而不是固定
+                else:
+                    teacher_model.eval()
             self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
                 model, data_loader, optimizer, task_dropout=self.task_dropout, 
                 teacher_model=teacher_model, kd_ratio=cfg.MODEL.OFA_MOBILENETV3.KD_RATIO,
@@ -620,6 +626,7 @@ class DefaultTrainer(TrainerBase):
                 model,
                 cfg.OUTPUT_DIR,
                 is_ofa=cfg.MODEL.IS_OFA,
+                is_controller=self.train_controller,
                 resume=resume,
                 trainer=weakref.proxy(self),
             )
@@ -764,7 +771,7 @@ class DefaultTrainer(TrainerBase):
             data_idx = int(self.permutation[self.iter_in_epoch] % self.superclass_loader_len)
             self.data_for_this_iter = self.input_data[superclass_id][data_idx] # 要把这个数据给test_controller,让它只在这个data上test
             self.results_for_this_iter, self.box_cls_for_this_iter, self.targets_for_this_iter, self.output_logits_for_this_iter, self.super_targets_for_this_iter =\
-                self._trainer.run_step_controller(tau=self.tau, loss_type=self.loss_type, data=self.data_for_this_iter, superclass_id=superclass_id)
+                self._trainer.run_step_controller(tau=self.tau, loss_type=self.loss_type, data=self.data_for_this_iter, superclass_id=superclass_id, sp_temp=self.sp_temp)
         else:
             self._trainer.run_step()
 

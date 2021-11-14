@@ -3,7 +3,8 @@ import sys
 import time
 import typing
 from dataclasses import dataclass
-
+from torch.utils.tensorboard import SummaryWriter
+from codebase.torchutils.log import get_logger
 import matplotlib
 import numpy as np
 import torch
@@ -16,7 +17,6 @@ from codebase.third_party.spos_ofa.ofa.nas.efficiency_predictor import \
     Mbv3FLOPsModel
 from codebase.third_party.spos_ofa.ofa.nas.search_algorithm.evolution import \
     EvolutionFinder, EvolutionAllTaskFinder
-from codebase.torchutils import logger
 from codebase.torchutils.common import set_reproducible
 from codebase.torchutils.common import unwarp_module
 from codebase.torchutils.distributed import (is_dist_avail_and_init,
@@ -53,6 +53,7 @@ def search(
         latency_constraint,
         all_task=False,
         only_show_time=False,
+        logger=None,
 ):
     """ Hyper-parameters for the evolutionary search process
     You can modify these hyper-parameters to see how they influence the final ImageNet accuracy of the search sub-net.
@@ -95,7 +96,7 @@ def ofa_search(cfg, trainer):
     args = Args(cfg)
     set_reproducible(args.seed)
     torch.cuda.set_device(local_rank())
-
+    logger = get_logger("ofa_search", cfg.OUTPUT_DIR, "ofa_search.txt")
     model = trainer.model
     if hasattr(model, "module"):
         model_without_module = model.module
@@ -125,7 +126,7 @@ def ofa_search(cfg, trainer):
         ks_list=args.ks_list,
         expand_list=args.expand_list,
         depth_list=args.depth_list,
-        # superclass_list=list(range(num_superclass)) # 这个参数是要给的
+        superclass_list=list(range(num_superclass)) # 这个参数是要给的
     )
     accuracy_predictor = AccuracyPredictor(arch_encoder=arch_encoder)
     init = torch.load(args.acc_pretrained, map_location="cpu")
@@ -159,6 +160,7 @@ def ofa_search(cfg, trainer):
                     latency_constraint,
                     all_task=args.all_task,
                     only_show_time=args.only_show_time,
+                    logger=logger
                 )
                 if args.only_show_time:
                     break # 只loop一次
@@ -245,7 +247,7 @@ def ofa_search(cfg, trainer):
             plt.ylabel('Predicted mAP', size=12)
             plt.legend(['OFA'], loc='lower right')
             plt.grid(True)
-            plt.savefig(os.path.join(cfg.OUTPUT_DIR, f"{index_to_superclass_name[superclass_id]}_predicted.pdf"))
+            plt.savefig(os.path.join(cfg.OUTPUT_DIR, f"{index_to_superclass_name[superclass_id]}.pdf"))
             plt.close()
 
     if args.only_show_time:
@@ -257,9 +259,9 @@ def ofa_search(cfg, trainer):
     flops_list = np.array(flops_list)
     if args.all_task:
         all_task_mAP = np.array(all_task_mAP)
-        np.save(os.path.join(cfg.OUTPUT_DIR, "mAP_all_task.npy"), all_task_mAP)
-    np.save(os.path.join(cfg.OUTPUT_DIR, "mAP{}.npy".format("_each_task" if args.all_task else "")), mAP_list)
-    np.save(os.path.join(cfg.OUTPUT_DIR, "flops{}.npy".format("_all_task" if args.all_task else "")), flops_list)
+        np.save(os.path.join(cfg.OUTPUT_DIR, "mAP_all_task_OFA.npy"), all_task_mAP)
+    np.save(os.path.join(cfg.OUTPUT_DIR, "mAP{}_OFA.npy".format("_each_task" if args.all_task else "")), mAP_list)
+    np.save(os.path.join(cfg.OUTPUT_DIR, "flops{}_OFA.npy".format("_all_task" if args.all_task else "")), flops_list)
     if not args.all_task:
         for i in range(num_superclass):
             name = index_to_superclass_name[i]

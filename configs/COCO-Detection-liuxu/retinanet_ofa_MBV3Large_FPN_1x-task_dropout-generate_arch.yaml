@@ -16,7 +16,7 @@ MODEL:
     IN_FEATURES: ["res2", "res4", "res5"]
     USE_RELU: True
 SOLVER:
-  IMS_PER_BATCH: 8
+  IMS_PER_BATCH: 16
 DATASETS:
   TRAIN: ("coco_2017_train_task_dropout",)
   TEST: ("coco_2017_val_task_dropout",)

@@ -604,12 +604,13 @@ def _test_loader_from_config(cfg, dataset_name, mapper=None, task_dropout=False,
             "task_dropout": task_dropout, "train_controller": train_controller,
             "val_num_for_controller": cfg.MODEL.CONTROLLER.VAL_NUM, 
             "seed_for_controller": cfg.MODEL.CONTROLLER.SEED,
-            "whole_dataset": whole_dataset}
+            "whole_dataset": whole_dataset,
+            "total_batch_size": cfg.SOLVER.IMS_PER_BATCH if train_controller else 1}
 
 
 @configurable(from_config=_test_loader_from_config)
 def build_detection_test_loader(dataset, *, mapper, sampler=None, num_workers=0, class_ranges=None, \
-    meta=None, in_hier=None, task_dropout=False, train_controller=False, val_num_for_controller=0, seed_for_controller=2021, whole_dataset=None):
+    meta=None, in_hier=None, task_dropout=False, train_controller=False, val_num_for_controller=0, seed_for_controller=2021, whole_dataset=None, total_batch_size=1):
     """
     Similar to `build_detection_train_loader`, but uses a batch size of 1,
     and :class:`InferenceSampler`. This sampler coordinates all workers to
@@ -666,7 +667,7 @@ def build_detection_test_loader(dataset, *, mapper, sampler=None, num_workers=0,
     if train_controller:
         data_loader = torch.utils.data.DataLoader(
             dataset,
-            batch_size=1,
+            batch_size=total_batch_size,
             shuffle=False,
             # pin_memory=True,
             num_workers=num_workers,

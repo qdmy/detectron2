@@ -254,8 +254,8 @@ class SimpleTrainer(TrainerBase):
         """
         if model is not None:
             model.train() 
-        if teacher_model is not None and train_controller:
-            teacher_model.eval()
+        # if teacher_model is not None and train_controller:
+        #     teacher_model.eval()
         self.train_controller = train_controller
         self.model = model
         self.teacher_model = teacher_model
@@ -375,7 +375,7 @@ class SimpleTrainer(TrainerBase):
         """
         self.optimizer.step()
 
-    def run_step_controller(self, tau, loss_type="mse", data=None, superclass_id=0): # 此时，model是controller，teacher model是mp/sp_ofa_mbv3
+    def run_step_controller(self, tau, loss_type="mse", data=None, superclass_id=0, sp_temp=1.0): # 此时，model是controller，teacher model是mp/sp_ofa_mbv3
         """
         Implement the standard training logic described above.
         """
@@ -430,12 +430,12 @@ class SimpleTrainer(TrainerBase):
             mse_loss = (flops - constraint) * (flops - constraint)
         else:
             _, _, _, depth_cum_indicators, ratio_cum_indicators, kernel_cum_size_indicators \
-                = self.model([constraint], superclass_id)
+                = self.model([constraint], superclass_id, temperature=sp_temp)
             # # 保留下来传给test
             # self.depth_for_controller = depth_cum_indicators
             # self.ratio_for_controller = ratio_cum_indicators
             # self.kernel_size_for_controller = kernel_cum_size_indicators
-
+            
             teacher_loss, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = \
                 self.teacher_model(data, super_targets_idxs=super_targets_idxs, super_targets=super_targets, depth_for_controller=depth_cum_indicators, \
                 ratio_for_controller=ratio_cum_indicators, ks_for_controller=kernel_cum_size_indicators)

@@ -584,8 +584,10 @@ _C.MODEL.SP_OFA_MOBILENETV3.DEPTH_LIST = [2, 3, 4]
 # model.weights=""，TEST.EVAL_PERIOD=0
 # ---------------------------------------------------------------------------- #
 _C.MODEL.CONTROLLER = CN()
-_C.MODEL.CONTROLLER.NAME = "MP_MobileNetV3Controller" # or SP_
+_C.MODEL.CONTROLLER.NAME = "SP_MobileNetV3Controller" # or MP_
+_C.MODEL.CONTROLLER.SP_TEMPERATURE = 1.0
 _C.MODEL.CONTROLLER.TRAIN = False
+_C.MODEL.CONTROLLER.TRAIN_BN = False
 _C.MODEL.CONTROLLER.MAX_EPOCHS = 90
 _C.MODEL.CONTROLLER.VAL_NUM = 1100
 _C.MODEL.CONTROLLER.SEED = 2021
@@ -598,7 +600,7 @@ _C.MODEL.CONTROLLER.INITIAL_TAU = 5
 _C.MODEL.CONTROLLER.DECAY_FACTOR = 0.025
 _C.MODEL.CONTROLLER.TEACHER = CN()
 _C.MODEL.CONTROLLER.TEACHER.META_ARCHITECTURE = "RetinaNet"
-_C.MODEL.CONTROLLER.TEACHER.BACKBONE = "build_retinanet_mp_ofa_mbv3_fpn_backbone" # or build_retinanet_sp_ofa_mbv3_fpn_backbone
+_C.MODEL.CONTROLLER.TEACHER.BACKBONE = "build_retinanet_sp_ofa_mbv3_fpn_backbone" # or build_retinanet_mp_ofa_mbv3_fpn_backbone
 _C.MODEL.CONTROLLER.TEACHER.WEIGHT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0.1-2kd/model_final.pth"
 
 # ---------------------------------------------------------------------------- #
@@ -608,7 +610,7 @@ _C.MODEL.GENERATOR_ARCH = CN({"ENABLED": False})
 _C.MODEL.GENERATOR_ARCH.TYPE = "SP" # SP or MP, but MP is not supported 
 _C.MODEL.GENERATOR_ARCH.TEST_INTERVAL = 50
 _C.MODEL.GENERATOR_ARCH.CONTROLLER_CKPT = "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/controller/retinanet_controller_MBV3Large_FPN_1x_SP_run2/model_final.pth"
-
+_C.MODEL.GENERATOR_ARCH.TEACHER_CKPT = "/"
 
 # ---------------------------------------------------------------------------- #
 # train predictor

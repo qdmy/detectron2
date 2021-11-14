@@ -3,7 +3,8 @@ import os
 import sys
 import typing
 from dataclasses import dataclass
-
+from torch.utils.tensorboard import SummaryWriter
+from codebase.torchutils.log import get_logger
 import numpy as np
 import torch
 import torch.nn as nn
@@ -20,7 +21,6 @@ from codebase.third_party.spos_ofa.ofa.nas.accuracy_predictor.acc_predictor impo
 from codebase.third_party.spos_ofa.ofa.nas.accuracy_predictor.arch_encoder import (
     MobileNetArchEncoder, MobileNetAllTaskArchEncoder
 )
-from codebase.torchutils import logger, summary_writer
 from codebase.torchutils.common import save_checkpoint, set_reproducible
 from codebase.torchutils.distributed import local_rank
 from codebase.torchutils.metrics import (
@@ -58,32 +58,13 @@ class Args():
         self.output_directory = cfg.OUTPUT_DIR
 
 
-def merge_acc_dataset(path, image_size_list=None): 
-    net_id_path = os.path.join(path, "net_id.dict")
-    acc_src_folder = os.path.join(path, "src")
-    acc_dict_path = os.path.join(path, "mAP.dict")
-
-    # load existing data
-    merged_acc_dict = {}
-    for fname in os.listdir(acc_src_folder):
-        if ".dict" not in fname:
-            continue
-        image_size = int(fname.split(".")[0])
-        if image_size_list is not None and image_size not in image_size_list:
-            logger.info("Skip ", fname)
-            continue
-        full_path = os.path.join(acc_src_folder, fname)
-        partial_acc_dict = json.load(open(full_path))
-        merged_acc_dict.update(partial_acc_dict)
-        logger.info("loaded %s" % full_path)
-    json.dump(merged_acc_dict, open(acc_dict_path, "w"), indent=4)
-    return merged_acc_dict
-
-
 def build_acc_data_loader(
-    path, n_super_class, arch_encoder, n_training_sample=None, batch_size=256, n_workers=16, all_task=False,
+    path, n_super_class, arch_encoder, n_training_sample=None, batch_size=256, n_workers=16, all_task=False, logger=None,
 ):
-    map_dict_path = os.path.join(path, "mAP.dict")
+    if all_task:
+        map_dict_path = os.path.join(path, "mAP_all_task.dict")
+    else:
+        map_dict_path = os.path.join(path, "mAP.dict")
 
     # load data
     map_dict = json.load(open(map_dict_path))
@@ -151,7 +132,7 @@ def build_acc_data_loader(
     return train_loader, valid_loader, base_map
 
 
-def train(epoch, model, loader, criterion, optimizer, scheduler, report_freq):
+def train(epoch, model, loader, criterion, optimizer, scheduler, report_freq, logger=None,):
     model.train()
 
     loader_len = len(loader)
@@ -199,7 +180,7 @@ def train(epoch, model, loader, criterion, optimizer, scheduler, report_freq):
     return loss_metric.compute()
 
 
-def evaluate(epoch, model, loader, criterion, report_freq):
+def evaluate(epoch, model, loader, criterion, report_freq, logger=None,):
     model.eval()
 
     loader_len = len(loader)
@@ -241,7 +222,10 @@ def train_predictor(cfg):
     args = Args(cfg)
     set_reproducible(args.seed)
 
-    # merge_acc_dataset(args.map_root, image_size_list=[224]) # 我直接在外部手动合并好了，这个函数不执行
+    logger = get_logger("predictor", args.output_directory, "train_predictor.txt")
+    summary_writer = SummaryWriter(args.output_directory)
+
+    # merge_acc_dataset(args.map_root, image_size_list=[224])
     if args.all_task:
         arch_encoder_type = MobileNetAllTaskArchEncoder
     else:
@@ -260,6 +244,7 @@ def train_predictor(cfg):
         batch_size=args.batch_size,
         n_workers=args.num_workers,
         all_task=args.all_task,
+        logger=logger
     )
 
     torch.cuda.set_device(local_rank())
@@ -296,6 +281,7 @@ def train_predictor(cfg):
             optimizer,
             scheduler,
             args.report_freq,
+            logger=logger
         )
         summary_writer.add_scalar(f"{name}/loss", train_loss, epoch)
         summary_writer.add_scalar(f"{name}/lr", optimizer.param_groups[0]["lr"], epoch)
@@ -307,7 +293,7 @@ def train_predictor(cfg):
 
         name = "TEST"
         test_loss = evaluate(
-            epoch, model, valid_loader, train_criterion, args.report_freq
+            epoch, model, valid_loader, train_criterion, args.report_freq, logger=logger
         )
         summary_writer.add_scalar(f"{name}/loss", test_loss, epoch)
 

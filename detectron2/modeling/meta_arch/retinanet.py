@@ -318,8 +318,23 @@ class RetinaNet(nn.Module):
 
             if teacher_results is None:
                 gt_labels, gt_boxes, matched_idxs_for_mask = self.label_anchors(anchors, gt_instances)
-            losses, teacher_results = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes, 
-                                matched_idxs_for_mask, super_targets_masks, super_targets_inverse_masks, teacher_results=teacher_results)
+            if self.train_controller:
+                with torch.no_grad():
+                    if self.train_controller:
+                        losses, _ = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
+                    results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes,
+                                        super_targets_idxs, super_targets, gt_labels, matched_idxs_for_mask)
+                processed_results = []
+                for results_per_image, input_per_image, image_size in zip(
+                    results, batched_inputs, image_sizes
+                ):
+                    height = input_per_image.get("height", image_size[0])
+                    width = input_per_image.get("width", image_size[1])
+                    r = detector_postprocess(results_per_image, height, width)
+                    processed_results.append({"instances": r})
+            else:
+                losses, teacher_results = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes, 
+                                    matched_idxs_for_mask, super_targets_masks, super_targets_inverse_masks, teacher_results=teacher_results)
 
             if self.vis_period > 0:
                 storage = get_event_storage()
@@ -330,6 +345,9 @@ class RetinaNet(nn.Module):
                     )
                     self.visualize_training(batched_inputs, results)
             # del images, features, anchors, pred_logits, pred_anchor_deltas, 
+            
+            if self.train_controller:
+                return losses, processed_results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss
             return losses, teacher_results, gt_labels, gt_boxes, matched_idxs_for_mask
         else:
             if self.task_dropout:
@@ -338,10 +356,10 @@ class RetinaNet(nn.Module):
                 for i in range(len(gt_instances)):
                     assert len(gt_instances[i]) == len(super_targets_idxs[i]), "why in one image, loaded mask and instances are not same number"
                 gt_labels, gt_boxes, matched_idxs_for_mask = self.label_anchors(anchors, gt_instances)
-                if self.train_controller:
-                    losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
                 # 正常推理的时候还是需要这些结果，才能得出mAP
                 with torch.no_grad():
+                    if self.train_controller:
+                        losses, _ = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
                     results, final_box_clss, final_targetss, final_output_logitss, final_super_targetss = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes,
                                         super_targets_idxs, super_targets, gt_labels, matched_idxs_for_mask)
             else:
@@ -539,7 +557,7 @@ class RetinaNet(nn.Module):
                 return {
                     "loss_cls": loss_cls / self.loss_normalizer,
                     "loss_box_reg": loss_box_reg / self.loss_normalizer,
-                }
+                }, None
         else:
             return {
                 "loss_cls": loss_cls / self.loss_normalizer,

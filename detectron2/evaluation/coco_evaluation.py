@@ -642,7 +642,7 @@ def _evaluate_predictions_on_coco(
 
     coco_eval.evaluate()
     coco_eval.accumulate()
-    # 上面已经指定了在CatIDs上eval，所以这里就不需要了
+    # # 上面已经指定了在CatIDs上eval，所以这里就不需要了。
     # # accumulate之后，就得到了eval的结果，然后如果task dropout，则需要选出只55类的结果，再去summarize
     # if task_dropout:
     #     assert superclass_idx is not None, "when task dropout, need to filter out a subset result"

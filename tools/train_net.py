@@ -152,7 +152,7 @@ def main(args):
     if cfg.MODEL.BUILD_ACC_DATASET.ENABLED:
         trainer = Trainer(cfg, build_acc_dset=True)
         if cfg.MODEL.BUILD_ACC_DATASET.RESUME:
-            acc_dataset_resume(cfg.MODEL.BUILD_ACC_DATASET.RESUME, cfg.OUTPUT_DIR)
+            acc_dataset_resume(cfg.MODEL.BUILD_ACC_DATASET.RESUME, cfg.OUTPUT_DIR, net_id_part=cfg.MODEL.BUILD_ACC_DATASET.NET_ID_PART_INDEX)
         return build_acc_dataset(cfg.OUTPUT_DIR, trainer, image_size_list=[224], n_arch=cfg.MODEL.BUILD_ACC_DATASET.N_ARCH, \
             all_tasks=cfg.MODEL.BUILD_ACC_DATASET.ALL_TASKS, just_generate_net_id=cfg.MODEL.BUILD_ACC_DATASET.JUST_BUILD_NET_ID, \
                 net_id_part=cfg.MODEL.BUILD_ACC_DATASET.NET_ID_PART_INDEX)

@@ -5,7 +5,7 @@ MODEL:
     ALL_TASK: False
     SEED: 2021
     ONLY_SHOW_TIME: False
-    PREDICTOR_CKPT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/predictor/debug/best.pth"
+    PREDICTOR_CKPT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/predictor/coco-arch16k/best.pth"
     OFA_CKPT: "/mnt/cephfs/home/liuxu/code/python/workspace-detection-superclass/detectron2/output/coco-detection/ofa-correct-really/retinanet_ofa_MBV3Large_FPN_1x_task_dropout=0-2kd/model_final.pth"
     CONSTRAINT_LOW: 180
     CONSTRAINT_HIGH: 400
@@ -22,4 +22,4 @@ MODEL:
 DATASETS:
   TRAIN: ("coco_2017_train_task_dropout",)
   TEST: ("coco_2017_val_task_dropout",)
-OUTPUT_DIR: output/coco-detection/ofa-search/debug
+OUTPUT_DIR: output/coco-detection/ofa-search/search-with-coco-arch16k

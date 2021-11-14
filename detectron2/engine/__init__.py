@@ -52,7 +52,7 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
             if len(net_id_list) == 500:
                 net_id_list = list(net_id_list)
                 net_id_list.sort()
-                net_id_path = os.path.join(path, f"part{len(whole_net_id_list)//500}_net_id.dict")
+                net_id_path = os.path.join(path, "net_id", f"part{len(whole_net_id_list)//500}_net_id.dict")
                 json.dump(net_id_list, open(net_id_path, "w"), indent=4)
                 net_id_list = set()
 
@@ -63,8 +63,8 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
         return 0
 
     if net_id_part != -1:
-        net_id_path = os.path.join(path, f"part{net_id_part}_net_id.dict")
-        acc_src_folder = os.path.join(path, f"part{net_id_part}_src")
+        net_id_path = os.path.join(path, "net_id", f"part{net_id_part}_net_id.dict")
+        acc_src_folder = os.path.join(path, "src_parts", f"part{net_id_part}_src")
     else:
         net_id_path = os.path.join(path, "net_id.dict")
         acc_src_folder = os.path.join(path, "src")
@@ -165,7 +165,7 @@ def build_acc_dataset(path, trainer, image_size_list=None, n_arch=1000, all_task
                     json.dump(acc_dict_all_tasks, open(acc_save_path_all_tasks, "w"), indent=4)
 
 
-def resume(resume, path):
+def resume(resume, path, net_id_part=-1):
     if is_master():
         acc_src_ori_folder = os.path.join(resume, "src")
         acc_src_new_folder = os.path.join(path, "src")
